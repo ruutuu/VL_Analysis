@@ -1,0 +1,1102 @@
+---
+output:
+  word_document: default
+  html_document: default
+---
+VL Relapse analysis 15 Dev 2021
+
+PRE-PROCESSING THE FINAL DATASET FOR ANALYSIS:
+
+I)Creating drug classes, follow up duration related variables.
+II) Adding residuals to 0 event studies
+III) Filtering out studies:
+  1. Removing HIV co-infection based studies
+  2. Missing info
+  3. < 6month follow-up
+  4. Unpublished (already removed)
+
+```{r message=FALSE, warning=FALSE, include=FALSE}
+
+library(readr)
+library(readxl)
+# meta-analysis packages
+library(meta)
+library(metafor )
+#library(metagen)
+library(metasens) 
+# graphics packages
+library(tidyverse)
+library(reshape)
+library(doBy)
+library(stringr)
+library(ggpubr)
+library(patchwork)
+library(dplyr)
+library(data.table)
+
+setwd("~/IDDO/Data")
+
+#Pre-processed data (see Prepoc.R for the steps)
+#Pick up latest cleaned file
+#Check OneNote for the latest version
+
+vl_main <- read_csv("vldata_clean_1129.csv") 
+length(unique(vl_main$pub_id))
+
+#Additional variables from the study design: Relapse definitions, servere cases inclusion, tyoe if VL cases.
+
+relapse_def <- read_excel("vl_studydesign.xlsx", 
+    sheet = "outcome_defintion", col_types = c("numeric", 
+        "skip", "skip", "text", "text"))
+
+relapse_def$relapse_method<-tolower(relapse_def$relapse_method)
+
+vl_sev <- read_excel("vl_studydesign.xlsx", 
+    sheet = "disease_severity", col_types = c("skip", 
+        "numeric", "skip", "numeric", "skip", 
+        "text", "numeric", "skip", "text", 
+        "skip", "text"))
+#Dont change order in the raw excel file
+
+
+setDT(vl_sev)[, arm_no := rowid(tag)]
+vl_sev$id<-paste0(vl_sev$tag,"_",vl_sev$arm_no)
+vl_sev$tag<-NULL
+vl_sev$Arm_ID<-NULL
+vl_sev$arm_no <-NULL
+
+vl_sae <- read_excel("VL_SAE.xlsx", sheet = "VL_SAEs_per_arm_04_12_2019", 
+col_types = c("skip", "skip", "skip", 
+   "numeric", "skip", "numeric", "skip", 
+       "skip", "skip", "skip", "skip", "text", 
+       "skip", "skip", "numeric", "numeric", 
+        "skip", "skip", "skip", "skip", "skip"))
+
+vl_sae$id<-paste0(vl_sae$Tag,"_",vl_sae$Repeat.Instance )
+vl_sae$Tag<-NULL
+vl_sae$Repeat.Instance<-NULL
+
+vl_6monthplus_relapse <- read_excel("vl_6monthplus_relapse.xlsx")
+vl_6monthplus_relapse$id<-paste0(vl_6monthplus_relapse$pub_id,"_",vl_6monthplus_relapse$redcap_repeat_instance)
+vl_6monthplus_relapse$pub_id<-NULL
+vl_6monthplus_relapse$redcap_repeat_instance<-NULL
+
+df<-vl_main[,c('pub_id',
+               'st_intv_arms',
+               'redcap_repeat_instance',
+               'st_followup',
+              'me_hiv_yn',
+               'eff_arm_icure_num',
+               'eff_arm_icure_days',
+               'eff_arm_relapse_num',
+               'eff_arm_relapse_days',
+               'st_status',
+               'st_design',
+               'st_allocation',
+               'st_country_num',	
+               'st_country1',
+               'st_region',
+               'sa_num_tx'	,
+               'sa_num_followup',
+               'sa_combi',
+               'sa_intv1_drug',
+               'sa_intv1_dose_mgkg',
+               'sa_intv1_freq_discrete',
+              'sa_intv1_freq_new',
+              'sa_int1_total_dose',
+               'sa_intv1_dura',
+               'sa_intv1_reg_detail' ,
+               'sa_intv2_drug',
+               'sa_intv2_dose_mgkg',
+               'sa_intv2_freq_discrete',
+               'sa_intv2_dura',
+              'sa_intv2_reg_detail',
+              'me_diag')]
+
+
+#Unique ID for every study & arm
+df$id<-paste0(df$pub_id,"_",df$redcap_repeat_instance)
+
+df$eff_arm_icure_num<-as.numeric(df$eff_arm_icure_num)
+df$eff_arm_relapse_num<-as.numeric(df$eff_arm_relapse_num)
+df$sa_num_followup<-as.numeric(df$sa_num_followup)
+
+df0<-left_join(df,vl_sev,by="id")  #
+colnames(relapse_def)[1]<-"pub_id"
+df0<-left_join(df0,relapse_def,by="pub_id")
+ 
+df0$tag<-NULL
+df0$Arm_ID<-NULL
+df0$arm_no<-NULL
+
+
+length(unique(df0$pub_id))
+#Subset unpublished studies
+#Already removed 22 studies in Preproc!!
+#182-22=160 now
+df<-subset(df0,df0$st_status=="Published")
+length(unique(df$pub_id))
+
+
+df<-left_join(df,vl_sae,by='id')
+df<-left_join(df,vl_6monthplus_relapse ,by='id')
+
+length(unique(df0$pub_id))
+length(unique(df$pub_id))
+rm(vl_sev)
+rm(relapse_def)
+rm(df0)
+rm(vl_main)
+
+
+
+#Single drug or combination therapy. mono=1 for single drug
+df$mono<-ifelse(is.na(df$sa_intv2_drug),1,0 )
+
+#Making new treatment name
+df$drug<-ifelse(df$mono==1,df$sa_intv1_drug, paste0(df$sa_intv1_drug,' & ',df$sa_intv2_drug))
+
+#Drug list
+druglist<-unique(df$drug)
+
+#Dosage of LamB?
+#Use Freq_new as orignal dosage variable has missing info.
+#Freq_new created after 11_25 version
+
+df$sd<-ifelse(df$sa_intv1_freq_new=="Single dose",1,
+              ifelse(df$sa_intv1_freq_new=="Unknown",99,0))
+
+#dcat is for LamB regimens
+
+df$dcat<-ifelse((df$sa_intv1_drug=="Liposomal Amphotericin B (L-AmB)" & df$mono==1 & df$sd==1),"LamB SD Mono", #LamB single dose Mono
+         ifelse((df$sa_intv1_drug=="Liposomal Amphotericin B (L-AmB)" & df$mono==0 & df$sd==1),"LamB SD Comb",#LamB single dose Combo
+         ifelse((df$sa_intv1_drug=="Liposomal Amphotericin B (L-AmB)" & df$mono==1 & df$sd==0),"LamB MD Mono",#LamB multi dose Mono
+         ifelse((df$sa_intv1_drug=="Liposomal Amphotericin B (L-AmB)" & df$mono==0 & df$sd==0),"LamB MD Comb",#LamB multi dose Combo
+         ifelse((df$sa_intv1_drug=="Liposomal Amphotericin B (L-AmB)" &  df$mono==1 & df$sd==99),"LamB UD Mono",#LamB ? dose Mono
+         ifelse((df$sa_intv1_drug=="Liposomal Amphotericin B (L-AmB)" &  df$mono==0 & df$sd==99),"LamB UD Comb",0))))))#LamB ? dose Combo
+
+
+library(readxl)
+drug_cat <- read_excel("DrugCategories.xlsx", sheet = "drug_category")
+colnames(drug_cat)<-c("drug","drug_cat_others","Freq")
+df1<-left_join(df,drug_cat,by='drug')
+df1$Freq<-NULL
+#Drugcat is final drug regimen variable
+df1$drugcat<-ifelse(df1$dcat==0,df1$drug_cat_others,df1$dcat)
+
+
+#Drug category list
+drugcatlist<-unique(df1$drugcat)
+length(unique(df1$pub_id))
+
+
+#Subsetting studies with NA values
+
+#Removing studies with no reported denominator/cured numbers and 0 cured ones
+#Not removing those with NA as relapse num, because total_relapse maynot be NA
+
+df2<-subset(df1,df1$eff_arm_icure_num>0)
+length(unique(df2$pub_id))
+
+df2$n_icured<-df2$eff_arm_icure_num
+df2$eff_arm_icure_num<-NULL
+#-----------------------------------------------------------------------------------------------------------------------
+
+length(unique(df2$pub_id))
+#140 studies
+
+#Remove studies with HIV co-infections
+df_all<-subset(df2,!df2$me_hiv_yn=="Yes")
+length(unique(df_all$pub_id))
+df_hiv<-subset(df2,df2$me_hiv_yn=="Yes")
+length(unique(df_hiv$pub_id))
+#124 left
+
+#Remove studies with <6 month follow-up
+df_all<-subset(df_all,!df_all$st_followup<180)
+length(unique(df_all$pub_id))
+table(df_all$eff_arm_relapse_days)
+#----------------------------------------------------------------------------------------------------------------------------------------------------------------
+
+#Marking ones with 180 day follow-up: Categorizing studies by measurement of relapse time: 
+
+#1) Studies with relapse days (reported) for exact 180--                             --1--  eff_relapse_num 
+#2) Studies with relapse days (reported) of >180 and info on relapse at 6 month      --2--  relapse_6+relapse_6l
+#3) Studies with relapse days (reported) of >180 and no info on relapse at 6 month   --0--  NA
+
+#Important to treat NA and 0 differently. If NA/no info at 6 months, relapse_measurement_time (rmt) cannot be 180!
+#If it is 0 at 6 months, can be included, rmt can be 180
+
+df_all$rmt180<-ifelse(df_all$eff_arm_relapse_days==180,1,
+                      ifelse(df_all$eff_arm_relapse_days>180&(!is.na(df_all$relapse_6)),2,0))
+
+
+#Final relapse number variable at 180 days: frel180
+
+df_all$frel180<-ifelse(df_all$eff_arm_relapse_days==180&is.na(df_all$relapse_6_12),df_all$eff_arm_relapse_num, 
+                       #180 days FU and no value for relapse at 6-12m, take main value
+              ifelse(df_all$eff_arm_relapse_days==180&!is.na(df_all$relapse_6_12),rowSums(df_all[,c("relapse_6l","relapse_6")],na.rm=TRUE),
+                       #180 days FU and some value for relapse at 6-12m, DO NOT take main value, take relapses till 6 months ONLY!
+                                ifelse(df_all$rmt180==2,rowSums(df_all[,c("relapse_6l","relapse_6")],na.rm = TRUE),NA)))
+                       #180+ days FU and relapses reported at 6m--Definitely value at relapse_6-12, take relapses till 6 months ONLY! 
+                      #For those with ?180 FU, no value at 6m, NA!
+
+
+#Some studies with relapse_time less than 180!! 
+
+
+#Marking ones with 180-360 day follow-up: Categorizing studies by measurement of relapse time: 
+#1) Studies with relapse days (reported) of >180 and info on relapse at 6-12 month              --1--  relapse_6-12 only!! DONT TAKE relapse_6!
+#2) Studies with relapse days (reported) of >180 and no info on relapse at 6-12 month (NA)      --0--  NA
+
+
+df_all$rmt360<-ifelse(df_all$eff_arm_relapse_days>=180&(!is.na(df_all$relapse_6_12)),1,0)
+
+df_all$frel360<-ifelse(df_all$rmt360==1,df_all$relapse_6_12,NA)
+
+
+
+
+#Converting to factors:
+df_all$cases_grouped<-as.factor(df_all$cases_grouped)
+df_all$cases_grouped[is.na(df_all$cases_grouped)]<-"Unclear"
+df_all$severe_ka_included[is.na(df_all$severe_ka_included)]<-"Unclear"
+df_all$relapse_method[is.na(df_all$relapse_method)]<-"Not defined"
+df_all$relapse_method[df_all$relapse_method=="parasitological"]<-"Parasitological"
+df_all$relapse_method<-as.factor(df_all$relapse_method)
+
+df_all$n_relapse<-ifelse(df_all$eff_arm_relapse_num==0,0.5,df_all$eff_arm_relapse_num)
+df_all$n_ifail<-df_all$sa_num_tx-df_all$n_icured
+df_all$eff_arm_relapse_num<-NULL
+
+df_all[,c("number_of_deaths","n_SAEs","pkdl")]<-sapply(df_all[,c("number_of_deaths","n_SAEs","pkdl")], as.numeric)
+df_all<-as.data.frame(df_all)
+
+#Defining the composite measure:Initial Failures, Relapses and deaths!!!
+
+df_all$compo<-rowSums(df_all[,c("n_relapse","n_ifail")],na.rm = TRUE)
+
+#Correcting relapse method
+df_all$rel_diag<-ifelse(df_all$relapse_method=="clinical","C",
+                        ifelse(df_all$relapse_method %in% c("clinical + parasitological","Parasitological"),"P",
+                               ifelse(df_all$relapse_method %in% c("not defined","Not defined"),"U","CPS")))
+
+df_main<-df_all
+#df_main$n_relapse<-NULL
+
+df_main$frel<-rowSums(df_main[c('frel180','frel360')],na.rm = TRUE)
+#Checking how many with rmt180 and rmt360==0
+#Some studies are missed this way, nmeed to put values from redcap (n_relapse)
+
+c1<-subset(df_main,df_main$rmt180==0&df_main$rmt360==0)
+
+df_main$rmt360n<-ifelse(df_main$rmt180==0&df_main$rmt360==0&df_main$eff_arm_relapse_days>=180,1,df_main$rmt360)
+df_main$rmt180n<-ifelse(df_main$rmt180==0&df_main$rmt360==0&df_main$eff_arm_relapse_days<180,1,df_main$rmt180)
+
+df_main$frel360n<-ifelse(df_main$rmt180==0&df_main$rmt360==0&df_main$eff_arm_relapse_days>=180,df_main$n_relapse,df_main$frel360)
+df_main$frel180n<-ifelse(df_main$rmt180==0&df_main$rmt360==0&df_main$eff_arm_relapse_days<180,df_main$n_relapse,df_main$frel180)
+df_main$freln<-rowSums(df_main[c('frel180n','frel360n')],na.rm = TRUE)
+
+
+df_main$relapse_timen<-ifelse(df_main$rmt180==0&df_main$rmt360==0&df_main$eff_arm_relapse_days>=180,df_main$eff_arm_relapse_days,df_main$relapse_time)
+table(df_main$frel-df_main$freln)
+c2<-subset(df_main,df_main$rmt180n==0&df_main$rmt360n==0)
+
+df_main$frel<-df_main$freln
+df_main$frel180<-df_main$frel180n
+df_main$frel360<-df_main$frel360n
+df_main$rmt180<-df_main$rmt180n
+df_main$rmt360<-df_main$rmt360n
+df_main$relapse_time<-df_main$relapse_timen
+
+df_main[,c("rmt180n","rmt360n","frel180n","frel360n","freln","relapse_timen")]<-NULL
+df_main<-subset(df_main,!df_main$frel<0)
+#120 studies!
+```
+
+
+Overall Meta-analysis : Subgroup analysis
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+print("Meta-analysis overall")
+
+df_all<-subset(df_main,!df_main$frel<0)
+df_all<-subset(df_all,!is.na(df_all$n_icured))
+
+
+df_all<-subset(df_main,!df_main$n_relapse<0)
+
+m_all<- metaprop(
+  data = df_all,
+  event =frel,
+  n=n_icured, 
+  sm = "PLOGIT",
+  prediction=TRUE
+)
+summary(m_all)
+
+m_all.reldiag<-update.meta(m_all, 
+            byvar= rel_diag,
+            comb.random = TRUE, 
+            comb.fixed = F)
+
+
+events<-df_all%>% 
+    dplyr::group_by(rel_diag) %>%
+  dplyr::summarise(
+    n_studies 	= length(unique(pub_id)),
+    n_event	= sum(frel),
+    n_cured	= sum(n_icured),
+    n_totfu= sum(sa_num_tx))
+
+m_all.intdiag<-update.meta(m_all, 
+            byvar= me_diag,
+            comb.random = TRUE, 
+            comb.fixed = F)
+
+
+events<-df_all%>% 
+    dplyr::group_by(me_diag) %>%
+  dplyr::summarise(
+    n_studies 	= length(unique(pub_id)),
+    n_event	= sum(frel),
+    n_cured	= sum(n_icured),
+    n_totfu= sum(sa_num_tx))
+
+
+m_all.casetype<-update.meta(m_all, 
+            byvar= cases_grouped,
+            comb.random = TRUE, 
+            comb.fixed = F)
+
+print("Meta-analysis by Case type")
+summary(m_all.casetype)
+
+events<-df_all%>% 
+    dplyr::group_by(cases_grouped) %>%
+  dplyr::summarise(
+    n_studies 	= length(unique(pub_id)),
+    n_event	= sum(frel),
+    n_cured	= sum(n_icured),
+    n_totfu= sum(sa_num_tx))
+
+
+
+m_all.drugcat<-update.meta(m_all, 
+            byvar=drugcat,
+            comb.random = TRUE, 
+            comb.fixed = F)
+
+print("Meta-analysis by drug Category")
+summary(m_all.drugcat)
+
+m_all.region<-update.meta(m_all, 
+            byvar=st_region,
+            comb.random = TRUE, 
+            comb.fixed = F)
+
+print("Meta-analysis by Region")
+summary(m_all.region)
+
+
+
+m_all.sevcases<-update.meta(m_all, 
+            byvar= severe_ka_included,
+            comb.random = TRUE, 
+            comb.fixed = F)
+
+print("Meta-analysis by severe case inclusion")
+summary(m_all.sevcases)
+
+
+m_all.relapsemethod<-update.meta(m_all, 
+            byvar= relapse_method,
+            comb.random = TRUE, 
+            comb.fixed = F)
+
+print("Meta-analysis by relapse method")
+summary(m_all.sevcases)
+
+```
+
+Focus on studies with 6 month follow-up.
+```{r}
+#MAIN DATA SET FOR NOW!!
+df_6m<-subset(df_main,df_main$rmt180>0)
+
+c1<-subset(df_main,!df_main$rmt180>0)
+df_6m<-subset(df_6m,!df_6m$n_icured>0)
+#df_6m$frel<-rowSums(df_6m[c('frel180','frel360')],na.rm = TRUE)
+
+
+#Overall relapse estimate at 6 months for relapse proportions
+
+m_6m<- metaprop(
+  data = df_6m,
+  event =  frel180,
+  n=n_icured, 
+  sm = "PLOGIT",
+  prediction=TRUE
+)
+summary(m_6m)
+
+events_6m<-df_6m %>% 
+  dplyr::summarise(
+    n_studies 	= length(unique(pub_id)),
+    n_event	= sum(frel180),
+    n_cured	= sum(n_icured),
+    n_totfu= sum(sa_num_tx))
+
+m_6m.hiv<-update.meta(m_6m, 
+            byvar=me_hiv_yn,
+            comb.random = TRUE, 
+            comb.fixed = F)
+
+#No significant subgroup differences b/w unknown and no HIV studies status. 
+#We continue with all of them, likely to not include when status is unknown.
+
+
+
+#-----------
+m_6m.casetype<-update.meta(m_6m, 
+            byvar=cases_grouped,
+            comb.random = TRUE, 
+            comb.fixed = F)
+
+summary(m_6m.casetype)
+
+events_casetype<-df_6m %>% 
+  dplyr::group_by(cases_grouped) %>%
+  dplyr::summarise(
+    n_studies 	= length(unique(pub_id)),
+    n_event	= sum(frel180),
+    n_cured	= sum(n_icured),
+    n_totfu= sum(sa_num_tx))
+
+events_casetype
+
+m_6m.rel<-update.meta(m_6m, 
+            byvar=rel_diag,
+            comb.random = TRUE, 
+            comb.fixed = F)
+
+summary(m_6m.rel)
+
+events_rel<-df_6m %>% 
+  dplyr::group_by(rel_diag) %>%
+  dplyr::summarise(
+    n_studies 	= length(unique(pub_id)),
+    n_event	= sum(frel180),
+    n_cured	= sum(n_icured),
+    n_totfu= sum(sa_num_tx))
+
+
+m_6m.int<-update.meta(m_6m, 
+            byvar=me_diag,
+            comb.random = TRUE, 
+            comb.fixed = F)
+
+summary(m_6m.int)
+
+events_int<-df_6m %>% 
+  dplyr::group_by(me_diag) %>%
+  dplyr::summarise(
+    n_studies 	= length(unique(pub_id)),
+    n_event	= sum(frel180),
+    n_cured	= sum(n_icured),
+    n_totfu= sum(sa_num_tx))
+
+
+
+
+m_6m.sevcases<-update.meta(m_6m, 
+            byvar=severe_ka_included ,
+            comb.random = TRUE, 
+            comb.fixed = F)
+
+summary(m_6m.sevcases)
+
+
+events_sev<-df_6m %>% 
+  dplyr::group_by(severe_ka_included) %>%
+  dplyr::summarise(
+    n_studies 	= length(unique(pub_id)),
+    n_event	= sum(frel180),
+    n_cured	= sum(n_icured),
+    n_totfu= sum(sa_num_tx))
+
+```
+
+
+Stratified analysis by Region and Drug categories
+For all studies at 6 month follow-up!
+
+```{r echo=TRUE, message=FALSE, warning=FALSE}
+#MAIN DATA SET FOR NOW!!
+df_6m<-subset(df_main,df_main$rmt180>0)
+df_6m<-subset(df_6m,df_6m$n_icured>0)
+df_6m<-subset(df_6m,!df_6m$st_region=="Multi-Regional")
+
+final<-NULL
+
+drugcatlist<- c("LamB SD Mono" ,"LamB SD Comb",  "LamB MD Mono", "LamB MD Comb", "LamB UD Mono" ,"AmphB deoxycholate" ,"AmphB (FLCC)" ,"Miltefosine","Paromomycin" ,"Miltefosine & Paromomycin" ,"PA" ,"PA & Paromomycin"  ,"PA comb")    
+
+
+for (i in 1:18){
+  
+tmp<- df_6m[which(df_6m$drugcat==drugcatlist[i]),]
+
+if(nrow(tmp)==0) next
+tmp<- droplevels(tmp)
+
+m<- metaprop(
+  data = tmp,
+  event = frel180,#Relapse variable to be considered: Here it is at 180 days
+  n=n_icured, 
+  sm = "PLOGIT",
+  prediction=TRUE
+)
+assign(paste0("m_",i),m)
+
+
+# Egger's test for assessing publication bias
+#metabias(m)
+#trimfill(m)
+
+#--------------------------------
+# Subgroup analysis by Drug category
+#--------------------------------
+m_region<-update.meta(m, 
+            byvar=st_region, 
+            comb.random = TRUE, 
+            comb.fixed = F)
+assign(paste0("m_region_",i),m_region)
+
+s<-summary(m_region)
+s1<-s$within.random
+
+est<- exp(s1$TE)/(1+exp(s1$TE))
+est<-round(est,4)
+lb<-exp(s1$lower )/(1+exp(s1$lower))
+lb<-round(lb,3)
+ub<-exp(s1$upper )/(1+exp(s1$upper))
+ub<-round(ub,3)
+
+i2<-s$I2.w
+i2_est<- i2$TE
+i2_lb<-i2$lower
+i2_ub<-i2$upper
+i2_est<-round(i2_est,3)
+i2_lb<-round(i2_lb,3)
+i2_ub<-round(i2_ub,3)
+
+a<-NULL
+a=s$within.predict$lower
+p_lb<-exp(a)/(1+exp(a))
+
+a<-NULL
+a=s$within.predict$upper
+p_ub<-exp(a)/(1+exp(a))
+
+n<-s$k.w
+region<-s$bylevs
+dm<-cbind(region,n,est,lb,ub,i2_est,i2_lb,i2_ub,p_lb,p_ub)
+dm<-as.data.frame(dm)
+dm$drugcat<-drugcatlist[i]
+dm<-dm[,c(11,1:10)]
+
+o<-s$random
+o_n<-s$k
+o_est<-exp(o$TE)/(1+exp(o$TE))
+o_lb<-exp(o$lower)/(1+exp(o$lower))
+o_ub<-exp(o$upper)/(1+exp(o$upper))
+
+
+oi2<-s$I2
+a<-NULL
+a=s$predict$lower
+o_plb<-exp(a)/(1+exp(a))
+a<-NULL
+a=s$predict$upper
+o_pub<-exp(a)/(1+exp(a))
+
+
+o_row<-round(c(o_est,o_lb,o_ub,oi2$TE,oi2$lower,oi2$upper,o_plb,o_pub),3)
+o_row<-c(drugcatlist[i],"Overall",o_n, o_row)
+
+
+dm<-rbind(o_row,dm)
+
+
+events_region<-tmp %>% 
+  dplyr::group_by(st_region) %>%
+  dplyr::summarise(
+    n_studies 	= length(unique(pub_id)),
+    n_event	= sum(frel180), #Relapse variable to be considered: Here it is at 180 days
+    n_cured	= sum(n_icured),
+    n_totfu= sum(sa_num_tx))
+colnames(events_region)[1]<-"region"
+
+
+dm<-left_join(dm,events_region,by='region')
+
+final<-rbind(final,dm)
+assign(paste0("dm_",i),dm)
+ 
+print(drugcatlist[i])
+print(s)
+}
+
+final_store_rel<-final
+drugcat_names <- read_excel("DrugCategories.xlsx", 
+    sheet = "drug cat full names")
+
+final<-left_join(final,drugcat_names,by="drugcat")
+
+final<-final[,c("Drug Category", "region",  "n_studies","n","n_totfu","n_cured","n_event","est", "lb","ub","i2_est","i2_lb","i2_ub","p_lb","p_ub")]
+
+
+
+colnames(final)<-c("Drug Category","Region","Studies","Arms","Tot FU","In. cured", "Relapses", "Est","lb","ub","I2","i2_lb","i2_ub","p_lb","p_ub")
+
+
+cols.num <- c( "Est","lb","ub","I2","i2_lb","i2_ub","p_lb","p_ub")
+final[cols.num] <- sapply(final[cols.num],as.numeric)
+final[, cols.num] <- lapply(final[, cols.num, drop = FALSE],
+                             function(x) x * 100)
+
+final[, cols.num] <- lapply(final[, cols.num, drop = FALSE],
+                             function(x) round(x,2))
+write.csv(final,"MA_drugcat_region_6m_1207.csv")#Change date and name
+#Do prop.test for i=4 and 7 (Med)
+#Manualy updated results in Excel
+```
+
+
+
+Plot
+
+```{r}
+library(readxl)
+res_6m <- read_excel("MA_drugcat_region_6m_1207.xlsx", 
+    sheet = "MA_drugcat_region_6m_1207")
+
+colnames(res_6m)<-c("drug_category", "region",  "n_studies","arms","n_totfu","n_cured","n_event","est", "lb","ub","i2_est","i2_lb","i2_ub","p_lb","p_ub")
+res_6m$id<-paste0(res_6m$drug_category,res_6m$region)
+
+# Make every country unique
+res_6m$region<-factor(res_6m$region,levels = c(  "Mediterranean","Central Asia" , "South America","Eastern Africa","India Subcontinent","Overall"   ))
+
+r<-subset(res_6m,res_6m$drug_category%in% c("LAmB (Single dose) Mono regimen"   , "LamB (Single dose) Combination regimen"  ,"LamB (Multiple dose) Mono regimen" ))
+r$region<-factor(r$region,levels = c( "Mediterranean","Central Asia" , "South America","Eastern Africa","India Subcontinent","Overall"   ))
+
+
+library(RColorBrewer)
+
+#define custom color scale
+myColors <- brewer.pal(6, "Dark2")
+names(myColors) <- levels(r$region)
+myColors[6]<-"#E7298A"
+myColors[4]<- "#1E3F66"
+custom_colors <- scale_colour_manual(values = myColors)
+
+p <- ggplot(r, aes(x=region, y=est, ymin=lb, ymax=ub,colour = region)) + geom_pointrange( size=1.05,aes(colour = region))+
+#+ coord_cartesian(ylim=c(0, 30))+
+  coord_flip()+ ylab("Relapse Proportion at 6month (%)")+xlab("")+labs("Region")+
+  facet_wrap(~ drug_category, ncol = 1) +  theme(panel.background = element_rect(fill = "white"),panel.grid.major = element_line("lightgray",0.5),
+        panel.grid.minor = element_line("lightgray",0.25))+ custom_colors
+
+
+
+
+r1<-subset(res_6m,res_6m$drug_category%in% c("Amphotericin B deoxycholate"  , "Amphotericin b (fat/lipid/colloid/cholestrol)"))
+
+p1 <- ggplot(r1, aes(x=region, y=est, ymin=lb, ymax=ub,colour = region)) + geom_pointrange( size=1.05,aes(colour = region))+
+#+ coord_cartesian(ylim=c(0, 30))+
+  coord_flip()+ ylab("Relapse Proportion at 6month (%)")+xlab("")+labs("Region")+
+  facet_wrap(~ drug_category, ncol = 1) +  theme(panel.background = element_rect(fill = "white"),panel.grid.major = element_line("lightgray",0.5),
+        panel.grid.minor = element_line("lightgray",0.25))+ custom_colors
+p1
+
+ann_text <- data.frame(mpg = 15,wt = 5,lab = "Text",
+                       cyl = factor(8,levels = c("4","6","8")))
+p + geom_text(data = ann_text,label = "Text")
+
+r2<-subset(res_6m,res_6m$drug_category %in% c("Miltefosine"  ,"Paromomycin","Miltefosine & Paromomycin"  ,"Pentavalent antimonial" , "Pentavalent antimonial+ Paromomycin"))
+
+p2 <- ggplot(r2, aes(x=region, y=est, ymin=lb, ymax=ub,colour = region)) + geom_pointrange( size=1.05,aes(colour = region))+
+#+ coord_cartesian(ylim=c(0, 30))+
+  coord_flip()+ ylab("Relapse Proportion at 6month (%)")+xlab("")+labs("Region")+
+  facet_wrap(~ drug_category, ncol = 1) +  theme(panel.background = element_rect(fill = "white"),panel.grid.major = element_line("lightgray",0.5),
+        panel.grid.minor = element_line("lightgray",0.25))+ custom_colors
+p
+
+
+```
+
+PLotting for Treatment failure measure!!
+
+```{r echo=TRUE, message=FALSE, warning=FALSE}
+#MAIN DATA SET FOR NOW!!
+df_6m<-subset(df_main,df_main$rmt180>0)
+df_6m<-subset(df_6m,df_6m$n_icured>0)
+df_6m<-subset(df_6m,!df_6m$st_region=="Multi-Regional")
+
+final<-NULL
+
+drugcatlist<- c("LamB SD Mono" ,"LamB SD Comb",  "LamB MD Mono", "LamB MD Comb", "LamB UD Mono" ,"AmphB deoxycholate" ,"AmphB (FLCC)" ,"Miltefosine","Paromomycin" ,"Miltefosine & Paromomycin" ,"PA" ,"PA & Paromomycin"  ,"PA comb")    
+
+
+for (i in 1:18){
+  
+tmp<- df_6m[which(df_6m$drugcat==drugcatlist[i]),]
+
+if(nrow(tmp)==0) next
+tmp<- droplevels(tmp)
+
+m<- metaprop(
+  data = tmp,
+  event = compo,#Relapse variable to be considered: Here it is at composite measure
+  n=sa_num_tx, 
+  sm = "PLOGIT",
+  prediction=TRUE
+)
+#assign(paste0("m_",i),m)
+
+
+# Egger's test for assessing publication bias
+#metabias(m)
+#trimfill(m)
+
+#--------------------------------
+# Subgroup analysis by Drug category
+#--------------------------------
+m_region<-update.meta(m, 
+            byvar=st_region, 
+            comb.random = TRUE, 
+            comb.fixed = F)
+#assign(paste0("m_region_",i),m_region)
+
+s<-summary(m_region)
+s1<-s$within.random
+
+est<- exp(s1$TE)/(1+exp(s1$TE))
+est<-round(est,4)
+lb<-exp(s1$lower )/(1+exp(s1$lower))
+lb<-round(lb,3)
+ub<-exp(s1$upper )/(1+exp(s1$upper))
+ub<-round(ub,3)
+
+i2<-s$I2.w
+i2_est<- i2$TE
+i2_lb<-i2$lower
+i2_ub<-i2$upper
+i2_est<-round(i2_est,3)
+i2_lb<-round(i2_lb,3)
+i2_ub<-round(i2_ub,3)
+
+a<-NULL
+a=s$within.predict$lower
+p_lb<-exp(a)/(1+exp(a))
+
+a<-NULL
+a=s$within.predict$upper
+p_ub<-exp(a)/(1+exp(a))
+
+n<-s$k.w
+region<-s$bylevs
+dm<-cbind(region,n,est,lb,ub,i2_est,i2_lb,i2_ub,p_lb,p_ub)
+dm<-as.data.frame(dm)
+dm$drugcat<-drugcatlist[i]
+dm<-dm[,c(11,1:10)]
+
+o<-s$random
+o_n<-s$k
+o_est<-exp(o$TE)/(1+exp(o$TE))
+o_lb<-exp(o$lower)/(1+exp(o$lower))
+o_ub<-exp(o$upper)/(1+exp(o$upper))
+
+
+oi2<-s$I2
+a<-NULL
+a=s$predict$lower
+o_plb<-exp(a)/(1+exp(a))
+a<-NULL
+a=s$predict$upper
+o_pub<-exp(a)/(1+exp(a))
+
+
+o_row<-round(c(o_est,o_lb,o_ub,oi2$TE,oi2$lower,oi2$upper,o_plb,o_pub),3)
+o_row<-c(drugcatlist[i],"Overall",o_n, o_row)
+
+
+dm<-rbind(o_row,dm)
+
+
+events_region<-tmp %>% 
+  dplyr::group_by(st_region) %>%
+  dplyr::summarise(
+    n_studies 	= length(unique(pub_id)),
+    n_event	= sum(compo), #Relapse variable to be considered: Here it is at 180 days
+    n_cured	= sum(n_icured),
+    n_totfu= sum(sa_num_tx))
+colnames(events_region)[1]<-"region"
+
+
+dm<-left_join(dm,events_region,by='region')
+
+final<-rbind(final,dm)
+assign(paste0("dm_",i),dm)
+ 
+print(drugcatlist[i])
+print(s)
+}
+
+final_store<-final
+drugcat_names <- read_excel("DrugCategories.xlsx", 
+    sheet = "drug cat full names")
+
+final<-left_join(final,drugcat_names,by="drugcat")
+
+final<-final[,c("Drug Category", "region",  "n_studies","n","n_totfu","n_cured","n_event","est", "lb","ub","i2_est","i2_lb","i2_ub","p_lb","p_ub")]
+
+
+
+colnames(final)<-c("Drug Category","Region","Studies","Arms","Tot FU","In. cured", "TFs", "Est","lb","ub","I2","i2_lb","i2_ub","p_lb","p_ub")
+
+cols.num <- c( "Est","lb","ub","I2","i2_lb","i2_ub","p_lb","p_ub")
+final[cols.num] <- sapply(final[cols.num],as.numeric)
+final[, cols.num] <- lapply(final[, cols.num, drop = FALSE],
+                             function(x) x * 100)
+
+final[, cols.num] <- lapply(final[, cols.num, drop = FALSE],
+                             function(x) round(x,2))
+write.csv(final,"MA_drugcat_region_6m_compo_1207.csv")#Change date and name
+```
+
+
+Focus on 13 studies with follow up duration of more than 6 months
+```{r}
+df_13<-subset(df_main,df_main$rmt360==1)
+
+#df_13f<-subset(df_13,!df_13$drugcat%in%c("AmphB (Unk)","Sitamaquine",  "Others"))
+
+df12m<-subset(df_13,!df_13$relapse_time%in% c("240","270"))
+#Only studies with estiamtes at 6 and 12 months both!!
+df612<-subset(df12m,df12m$rmt180>0)
+length(unique(df612$pub_id))
+#Estimate at 6 month only
+m6<- metaprop(
+  data = df612,
+  event =  frel180,
+  n=n_icured, 
+  sm = "PLOGIT",
+  prediction=TRUE)
+
+events<-df612 %>% 
+  dplyr::summarise(
+    n_studies 	= length(unique(pub_id)),
+    n_event	= sum(frel180), #Relapse variable to be considered: Here it is at 180 days
+    n_cured	= sum(n_icured),
+    n_totfu= sum(sa_num_tx))
+
+#Estimate at 12 month only
+m12<- metaprop(
+  data = df612,
+  event =  frel360,
+  n=n_icured, 
+  sm = "PLOGIT",
+  prediction=TRUE)
+
+events<-df612 %>% 
+  dplyr::summarise(
+    n_studies 	= length(unique(pub_id)),
+    n_event	= sum(frel360), #Relapse variable to be considered: Here it is at 180 days
+    n_cured	= sum(n_icured),
+    n_totfu= sum(sa_num_tx))
+
+#Estimate at 12 month only
+m612<- metaprop(
+  data = df612,
+  event =  frel,
+  n=n_icured, 
+  sm = "PLOGIT",
+  prediction=TRUE)
+
+events<-df612 %>% 
+  dplyr::summarise(
+    n_studies 	= length(unique(pub_id)),
+    n_event	= sum(frel), #Relapse variable to be considered: Here it is at 180 days
+    n_cured	= sum(n_icured),
+    n_totfu= sum(sa_num_tx))
+
+
+
+m13s_12<-update.meta(m13_12, 
+            byvar=pub_id, 
+            comb.random = TRUE, 
+            comb.fixed = F)
+
+events<-df_13 %>% 
+  dplyr::group_by(pub_id) %>%
+  dplyr::summarise(
+    n_studies 	= length(unique(pub_id)),
+    n_event	= sum(frel360), #Relapse variable to be considered: Here it is at 180 days
+    n_cured	= sum(n_icured),
+    n_totfu= sum(sa_num_tx))
+
+#Sum of relapses at 6 and ?6 months. If one is NA--> treated as 0
+#Useless measure
+
+#For 12 months follow up studies, not <12 but at 12 months!!
+#Relapse_time is a confusing variable: Puts noted relapse cases, it is NOT FOLLOW UP DURATION!!!
+#eff_relapse_days is not correctly written either.
+
+#For now, all studies with rmt360==1 and relapse_time =! 240,270
+
+df12m<-subset(df_13,!df_13$relapse_time%in% c("240","270"))
+length(unique(df12m$pub_id))
+#11 studies with 12 month follow-up and reporting at 12 months
+m11<- metaprop(
+  data = df12m,
+  event =  frel,
+  n=n_icured, 
+  sm = "PLOGIT",
+  prediction=TRUE)
+
+summary(m11)
+#-------------
+#Relapse at 6 months Estimate:
+
+m11_6<- metaprop(
+  data = df12m,
+  event =  frel180,
+  n=n_icured, 
+  sm = "PLOGIT",
+  prediction=TRUE)
+
+summary(m11_6)
+
+
+events_m11_6<-df12m %>% 
+  dplyr::summarise(
+    n_studies 	= length(unique(pub_id)),
+    n_event	= sum(frel180,na.rm = TRUE),
+    n_cured	= sum(n_icured),
+    n_totfu= sum(sa_num_tx))
+
+events_m11_drug<-df12m %>% 
+  dplyr::group_by(drugcat) %>%
+  dplyr::summarise(
+    n_studies 	= length(unique(pub_id)),
+    n_event	= sum(frel180,na.rm = TRUE),
+    n_cured	= sum(n_icured),
+    n_totfu= sum(sa_num_tx))
+
+
+
+m11_12<- metaprop(
+  data = df12m,
+  event =  frel360,
+  n=n_icured, 
+  sm = "PLOGIT",
+  prediction=TRUE)
+
+summary(m13_12)
+
+events_m13_12<-df12m%>% 
+  dplyr::summarise(
+    n_studies 	= length(unique(pub_id)),
+    n_event	= sum(frel360,na.rm = TRUE),
+    n_cured	= sum(n_icured),
+    n_totfu= sum(sa_num_tx))
+
+```
+
+For Indian Subcontinent, LamB SD: DOsage and relapse relationship
+
+```{r}
+df_ind<-subset(df_main,df_main$st_region=="India Subcontinent")
+df_ind$sa_int1_total_dose<-as.numeric(df_ind$sa_int1_total_dose)
+
+df_ind1<-subset(df_ind,df_ind$drugcat=="LamB SD Mono")
+df_ind1<-subset(df_ind1,df_ind1$frel180>=0)
+
+df_ind1$sa_int1_total_dose<-as.numeric(df_ind1$sa_int1_total_dose)
+df_ind1$total_dose<-ifelse(df_ind1$sa_int1_total_dose<=5,1,ifelse(df_ind1$sa_int1_total_dose<=10,2,3))
+table(df_ind1$sa_int1_total_dose)
+table(df_ind1$total_dose)
+
+
+m<- metaprop(
+  data = df_ind1,
+  event = compo,
+  n=sa_num_tx, 
+  sm = "PLOGIT",
+  prediction=TRUE
+)
+summary(m)
+m.dose<-update.meta(m, 
+            byvar=total_dose,
+            comb.random = TRUE, 
+            comb.fixed = F)
+summary(m.dose)
+
+events<-df_ind1%>% 
+    dplyr::group_by(total_dose) %>%
+   dplyr::summarise(
+    n_studies 	= length(unique(pub_id)),
+    n_event	= sum(compo,na.rm = TRUE),
+    n_cured	= sum(n_icured),
+    n_totfu= sum(sa_num_tx))
+
+#Performs chi-squared test for trend in proportion. This test is also known as Cochran-Armitage trend test.
+#Wrappers around the R base function prop.trend.test() but returns a data frame for easy data visualization.
+
+
+df_ind1$n_defcure<-df_ind1$n_icured-df_ind1$frel180
+df_ind1$notf<-df_ind1$sa_num_tx-df_ind1$compo
+
+xtab<-as.table(cbind(df_ind1$frel180,df_ind1$n_defcure))
+xtab1<-as.table(cbind(df_ind1$compo,df_ind1$notf))
+
+library('rstatix')
+prop_trend_test(xtab,df_ind1$total_dose)
+
+prop_trend_test(xtab1,df_ind1$total_dose)
+
+```
+
+```{r}
+library('lme4')
+model1<- glmer(cbind(frel180,n_defcure) ~   sa_int1_total_dose + (1 | id) ,
+              family = binomial, data = df_ind1)
+
+summary(model1)
+
+
+model1a<- glmer(cbind(frel180,n_defcure) ~   sa_int1_total_dose +rel_diag+(1 | id) ,
+              family = binomial, data = df_ind1)
+
+summary(model1a)
+
+
+model2<- glmer(cbind(compo,notf) ~   sa_int1_total_dose + (1 | id) ,
+              family = binomial, data = df_ind1)
+
+summary(model2)
+```
+
+
+```{r}
+df_ea<-subset(df_main,df_main$st_region=="Eastern Africa")
+df_ea$sa_int1_total_dose<-as.numeric(df_ea$sa_int1_total_dose)
+
+df_ea<-subset(df_ea,df_ea$drugcat=="LamB SD Mono")
+df_ind1<-subset(df_ind1,df_ind1$frel180>=0)
+```
+
+
+```{r}
+
+```
+

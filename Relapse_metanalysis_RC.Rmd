@@ -1,0 +1,339 @@
+---
+output:
+  html_document: default
+  word_document: default
+---
+```{r message=FALSE, warning=FALSE}
+
+library(readr)
+
+library(readxl)
+
+# meta-analysis packages
+library(meta)
+library(metafor )
+#library(metagen)
+library(metasens) 
+
+# graphics packages
+library(tidyverse)
+library(reshape)
+library(doBy)
+library(stringr)
+library(ggpubr)
+library(patchwork)
+setwd("~/IDDO/Data")
+vl_main <- read_csv("vldata_clean.csv")
+
+
+df<-vl_main[,c('pub_id',
+               'st_intv_arms',
+               'redcap_repeat_instance',
+               'st_followup',
+              'me_hiv_yn',
+               'eff_arm_icure_num',
+               'eff_arm_icure_days',
+               'eff_arm_relapse_num',
+               'eff_arm_relapse_days',
+               'st_status',
+               'st_design',
+               'st_allocation',
+               'st_country_num',	
+               'st_country1',
+               'st_region',
+               'sa_num_tx'	,
+               'sa_num_followup',
+               'sa_combi',
+               'sa_intv1_drug',
+               'sa_intv1_dose_mgkg',
+               'sa_intv1_freq_discrete',
+               'sa_intv1_dura',
+               'sa_intv2_drug',
+               'sa_intv2_dose_mgkg',
+               'sa_intv2_freq_discrete',
+               'sa_intv2_dura')]
+
+df$id<-paste0(df$pub_id,"_",df$redcap_repeat_instance)
+df$eff_arm_icure_num<-as.numeric(df$eff_arm_icure_num)
+df$eff_arm_relapse_num<-as.numeric(df$eff_arm_relapse_num)
+df$sa_num_followup<-as.numeric(df$sa_num_followup)
+
+#df<-df[,c(1,24,2:23)]
+
+#Subset unpublished studies
+df<-subset(df,df$st_status=="Published")
+
+```
+
+Creating drug classes, follow up duration related variables.
+
+```{r message=FALSE, warning=FALSE}
+df$mono<-ifelse(is.na(df$sa_intv2_drug),1,0 )
+df$drug<-ifelse(df$mono==1,df$sa_intv1_drug,
+                paste0(df$sa_intv1_drug,' & ',df$sa_intv2_drug))
+druglist<-unique(df$drug)
+
+df$sd<-ifelse(df$sa_intv1_freq_discrete=="Single dose",1,
+              ifelse(is.element(df$sa_intv1_freq_discrete,c("Other","Unknown")),99,0))
+
+
+df$dcat<-ifelse((df$sa_intv1_drug=="Liposomal Amphotericin B (L-AmB)" & df$mono==1 & df$sd==1),"LamB SD", 
+                ifelse((df$sa_intv1_drug=="Liposomal Amphotericin B (L-AmB)" & df$mono==0 & df$sd==1),"LamB SD Comb",
+                        ifelse((df$sa_intv1_drug=="Liposomal Amphotericin B (L-AmB)" & df$mono==1 & df$sd==0),"LamB MD",
+                                ifelse((df$sa_intv1_drug=="Liposomal Amphotericin B (L-AmB)" & df$mono==0 & df$sd==0),"LamB MD Comb",
+                                       ifelse((df$sa_intv1_drug=="Liposomal Amphotericin B (L-AmB)" & df$sd==99),"LamB Unk",0)))))
+
+
+library(readxl)
+drug_cat <- read_excel("DrugCategories.xlsx", sheet = "drug_category")
+
+df1<-left_join(df,drug_cat,by='drug')
+df1$Freq<-NULL
+df1$drugcat<-ifelse(df1$dcat==0,df1$drug_cat,df1$dcat)
+
+
+df1$fud180<-ifelse(df1$st_followup==180,1,ifelse(df1$st_followup>180,2,0))
+```
+
+Adding residuals to 0 event studies
+Filtering out studies:
+Removing HIV co-infection based studies
+```{r message=FALSE, warning=FALSE}
+
+df1$n_relapse<-ifelse(df1$eff_arm_relapse_num==0,0.5,df1$eff_arm_relapse_num)
+
+df2<-subset(df1,!is.na(df1$eff_arm_relapse_num))
+df2<-subset(df2,df2$n_relapse>0)
+df2<-subset(df2,!is.na(df2$eff_arm_icure_num))
+df2$n_icured<-df2$eff_arm_icure_num
+df2<-subset(df2,df2$n_icured>0)
+
+#Remove studies with HIV co-infections
+df_all<-subset(df2,!df2$me_hiv_yn=="Yes")
+df_all<-subset(df_all,!df_all$fud180==0)
+```
+
+Meta-analysis
+```{r echo=TRUE, message=FALSE, warning=FALSE}
+m_all<- metaprop(
+  data = df_all,
+  event =  n_relapse,
+  n=n_icured, 
+  sm = "PLOGIT",
+  prediction=TRUE
+)
+summary(m_all)
+
+m_all.drugcat<-update.meta(m_all, 
+            byvar=drugcat,
+            comb.random = TRUE, 
+            comb.fixed = F)
+
+summary(m_all.drugcat)
+
+m_all.region<-update.meta(m_all, 
+            byvar=st_region,
+            comb.random = TRUE, 
+            comb.fixed = F)
+
+summary(m_all.region)
+
+```
+
+Stratified analysis by Region
+
+1. India Subcontinent
+
+```{r warning=FALSE, include=FALSE}
+df_IC<- df_all[which(df_all$st_region=="India Subcontinent"),]
+df_IC<- droplevels(df_IC)
+
+(m_ic<- metaprop(
+  data = df_IC,
+  event =  n_relapse,
+  n=n_icured, 
+  sm = "PLOGIT",
+  prediction=TRUE
+)
+)
+
+
+# Egger's test for assessing publication bias
+metabias(m_ic)
+trimfill(m_ic)
+
+#--------------------------------
+# Subgroup analysis by Drug category
+#--------------------------------
+m_ic.drugcar<-update.meta(m_ic, 
+            byvar=drugcat, 
+            comb.random = TRUE, 
+            comb.fixed = F
+)
+
+
+# Subgroup analysis by follow up duration
+#--------------------------------
+m_ic.fud<-update.meta(m_ic, 
+            byvar=fud180,
+            comb.random = TRUE, 
+            comb.fixed = F
+)
+
+
+```
+
+```{r message=FALSE, warning=FALSE}
+print("Meta-analysis for Indian Subcontinent")
+summary(m_ic)
+
+print("Meta-analysis for Indian Subcontinent by Drug Category")
+summary(m_ic.drugcar)
+
+print("Meta-analysis for Indian Subcontinent by Follow-up duration")
+summary(m_ic.fud)
+
+```
+
+
+
+Stratified analysis by Region
+
+2. Eastern Africa
+
+```{r warning=FALSE, include=FALSE}
+df_EA<- df_all[which(df_all$st_region=="Eastern Africa"),]
+df_EA<- droplevels(df_EA)
+
+(m_ea<- metaprop(
+  data = df_EA,
+  event =  n_relapse,
+  n=n_icured, 
+  sm = "PLOGIT",
+  prediction=TRUE
+)
+)
+
+
+# Egger's test for assessing publication bias
+metabias(m_ea)
+trimfill(m_ea)
+
+#--------------------------------
+# Subgroup analysis by Drug category
+#--------------------------------
+m_ea.drugcar<-update.meta(m_ea, 
+            byvar=drugcat, 
+            comb.random = TRUE, 
+            comb.fixed = F
+)
+
+
+# Subgroup analysis by follow up duration
+#--------------------------------
+m_ea.fud<-update.meta(m_ea, 
+            byvar=fud180,
+            comb.random = TRUE, 
+            comb.fixed = F
+)
+
+
+```
+
+```{r message=FALSE, warning=FALSE}
+print("Meta-analysis for Indian Subcontinent")
+summary(m_ea)
+
+print("Meta-analysis for Indian Subcontinent by Drug Category")
+summary(m_ea.drugcar)
+
+print("Meta-analysis for Indian Subcontinent by Follow-up duration")
+summary(m_ea.fud)
+
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
