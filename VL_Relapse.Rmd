@@ -17,34 +17,17 @@ III) Filtering out studies:
 
 ```{r message=FALSE, warning=FALSE, include=FALSE}
 
-library(readr)
-library(readxl)
-# meta-analysis packages
-library(meta)
-library(metafor )
-#library(metagen)
-library(metasens) 
-# graphics packages
-library(tidyverse)
-library(reshape)
-library(doBy)
-library(stringr)
-library(ggpubr)
-library(patchwork)
-library(dplyr)
-library(data.table)
+setwd("C:/Users/Rutuja Chhajed/OneDrive - Nexus365/IDDO/Data")
 
-setwd("~/IDDO/Data")
-
+#D1: VLDATA_CLEAN
 #Pre-processed data (see Prepoc.R for the steps)
 #Pick up latest cleaned file
 #Check OneNote for the latest version
+vl_main <-read_csv("vldata_clean_1129.csv")
+length(unique(vl_main$pub_id)) #160 studies!
 
-vl_main <- read_csv("vldata_clean_1129.csv") 
-length(unique(vl_main$pub_id))
-
-#Additional variables from the study design: Relapse definitions, servere cases inclusion, tyoe if VL cases.
-
+#Additional variables from the vl_studydesign: Relapse definitions, severe cases inclusion, type if VL cases.
+#D2: VL_SEVEREDESIGN
 relapse_def <- read_excel("vl_studydesign.xlsx", 
     sheet = "outcome_defintion", col_types = c("numeric", 
         "skip", "skip", "text", "text"))
@@ -58,12 +41,14 @@ vl_sev <- read_excel("vl_studydesign.xlsx",
         "skip", "text"))
 #Dont change order in the raw excel file
 
-
 setDT(vl_sev)[, arm_no := rowid(tag)]
 vl_sev$id<-paste0(vl_sev$tag,"_",vl_sev$arm_no)
 vl_sev$tag<-NULL
 vl_sev$Arm_ID<-NULL
 vl_sev$arm_no <-NULL
+
+
+#D3: VL_SAE (Taken from SAE paper)
 
 vl_sae <- read_excel("VL_SAE.xlsx", sheet = "VL_SAEs_per_arm_04_12_2019", 
 col_types = c("skip", "skip", "skip", 
@@ -76,10 +61,14 @@ vl_sae$id<-paste0(vl_sae$Tag,"_",vl_sae$Repeat.Instance )
 vl_sae$Tag<-NULL
 vl_sae$Repeat.Instance<-NULL
 
+#D4: DATA ON RELAPSES AT DIFF TIMEPOINTS: VL_6MONTHPLUS_RELAPSE
+#Variables for relapses at 6l, 6, 6p (Extracted manually by RC, PD)
+setwd("C:/Users/Rutuja Chhajed/OneDrive - Nexus365/IDDO/Data")
 vl_6monthplus_relapse <- read_excel("vl_6monthplus_relapse.xlsx")
 vl_6monthplus_relapse$id<-paste0(vl_6monthplus_relapse$pub_id,"_",vl_6monthplus_relapse$redcap_repeat_instance)
 vl_6monthplus_relapse$pub_id<-NULL
 vl_6monthplus_relapse$redcap_repeat_instance<-NULL
+
 
 df<-vl_main[,c('pub_id',
                'st_intv_arms',
@@ -113,13 +102,9 @@ df<-vl_main[,c('pub_id',
               'sa_intv2_reg_detail',
               'me_diag')]
 
-
+#combining all variables in one df
 #Unique ID for every study & arm
 df$id<-paste0(df$pub_id,"_",df$redcap_repeat_instance)
-
-df$eff_arm_icure_num<-as.numeric(df$eff_arm_icure_num)
-df$eff_arm_relapse_num<-as.numeric(df$eff_arm_relapse_num)
-df$sa_num_followup<-as.numeric(df$sa_num_followup)
 
 df0<-left_join(df,vl_sev,by="id")  #
 colnames(relapse_def)[1]<-"pub_id"
@@ -128,15 +113,14 @@ df0<-left_join(df0,relapse_def,by="pub_id")
 df0$tag<-NULL
 df0$Arm_ID<-NULL
 df0$arm_no<-NULL
-
-
 length(unique(df0$pub_id))
-#Subset unpublished studies
-#Already removed 22 studies in Preproc!!
+
+
+#Subset unpublished studies-------------------------------------------------------------------------------------------------------
+#1) Already removed 22 studies in Preproc!!
 #182-22=160 now
 df<-subset(df0,df0$st_status=="Published")
 length(unique(df$pub_id))
-
 
 df<-left_join(df,vl_sae,by='id')
 df<-left_join(df,vl_6monthplus_relapse ,by='id')
@@ -148,7 +132,33 @@ rm(relapse_def)
 rm(df0)
 rm(vl_main)
 
+#2) Subsetting studies with NA values
+#Removing studies with no reported denominator/cured numbers and 0 cured ones
+#Not removing those with NA as relapse num, because total_relapse (Manually created variable by RC) may not be NA
 
+df1<-subset(df,df$eff_arm_icure_num>0)
+length(unique(df1$pub_id))
+#140 left
+df1$n_icured<-df1$eff_arm_icure_num
+df1$eff_arm_icure_num<-NULL
+
+# 3) #Remove studies with HIV co-infections
+df_all<-subset(df1,!df1$me_hiv_yn=="Yes")
+length(unique(df_all$pub_id))
+df_hiv<-subset(df1,df1$me_hiv_yn=="Yes")
+length(unique(df_hiv$pub_id))
+#124 left
+
+#Remove studies with <6 month follow-up
+df<-subset(df_all,!df_all$st_followup<180)
+length(unique(df$pub_id))
+table(df$eff_arm_relapse_days)
+table(df$eff_arm_relapse_num)
+#121 left
+rm(df_all)
+df_store<-df
+
+#Drug classifications:-----------------------------------------------------------------------------------------------
 
 #Single drug or combination therapy. mono=1 for single drug
 df$mono<-ifelse(is.na(df$sa_intv2_drug),1,0 )
@@ -177,45 +187,20 @@ df$dcat<-ifelse((df$sa_intv1_drug=="Liposomal Amphotericin B (L-AmB)" & df$mono=
 
 
 library(readxl)
+setwd("C:/Users/Rutuja Chhajed/OneDrive - Nexus365/IDDO/Data")
 drug_cat <- read_excel("DrugCategories.xlsx", sheet = "drug_category")
 colnames(drug_cat)<-c("drug","drug_cat_others","Freq")
-df1<-left_join(df,drug_cat,by='drug')
-df1$Freq<-NULL
+df_all<-left_join(df,drug_cat,by='drug')
+df_all$Freq<-NULL
 #Drugcat is final drug regimen variable
-df1$drugcat<-ifelse(df1$dcat==0,df1$drug_cat_others,df1$dcat)
+df_all$drugcat<-ifelse(df_all$dcat==0,df_all$drug_cat_others,df_all$dcat)
 
 
 #Drug category list
-drugcatlist<-unique(df1$drugcat)
-length(unique(df1$pub_id))
-
-
-#Subsetting studies with NA values
-
-#Removing studies with no reported denominator/cured numbers and 0 cured ones
-#Not removing those with NA as relapse num, because total_relapse maynot be NA
-
-df2<-subset(df1,df1$eff_arm_icure_num>0)
-length(unique(df2$pub_id))
-
-df2$n_icured<-df2$eff_arm_icure_num
-df2$eff_arm_icure_num<-NULL
-#-----------------------------------------------------------------------------------------------------------------------
-
-length(unique(df2$pub_id))
-#140 studies
-
-#Remove studies with HIV co-infections
-df_all<-subset(df2,!df2$me_hiv_yn=="Yes")
+drugcatlist<-unique(df_all$drugcat)
 length(unique(df_all$pub_id))
-df_hiv<-subset(df2,df2$me_hiv_yn=="Yes")
-length(unique(df_hiv$pub_id))
-#124 left
 
-#Remove studies with <6 month follow-up
-df_all<-subset(df_all,!df_all$st_followup<180)
-length(unique(df_all$pub_id))
-table(df_all$eff_arm_relapse_days)
+
 #----------------------------------------------------------------------------------------------------------------------------------------------------------------
 
 #Marking ones with 180 day follow-up: Categorizing studies by measurement of relapse time: 
@@ -257,7 +242,8 @@ df_all$frel360<-ifelse(df_all$rmt360==1,df_all$relapse_6_12,NA)
 
 
 
-#Converting to factors:
+#Converting to factors, changing group names.
+
 df_all$cases_grouped<-as.factor(df_all$cases_grouped)
 df_all$cases_grouped[is.na(df_all$cases_grouped)]<-"Unclear"
 df_all$severe_ka_included[is.na(df_all$severe_ka_included)]<-"Unclear"
@@ -265,6 +251,8 @@ df_all$relapse_method[is.na(df_all$relapse_method)]<-"Not defined"
 df_all$relapse_method[df_all$relapse_method=="parasitological"]<-"Parasitological"
 df_all$relapse_method<-as.factor(df_all$relapse_method)
 
+
+# Adding 0.5 to 0 relapse studies
 df_all$n_relapse<-ifelse(df_all$eff_arm_relapse_num==0,0.5,df_all$eff_arm_relapse_num)
 df_all$n_ifail<-df_all$sa_num_tx-df_all$n_icured
 df_all$eff_arm_relapse_num<-NULL
@@ -311,19 +299,31 @@ df_main$relapse_time<-df_main$relapse_timen
 
 df_main[,c("rmt180n","rmt360n","frel180n","frel360n","freln","relapse_timen")]<-NULL
 df_main<-subset(df_main,!df_main$frel<0)
+length(unique(df_main$pub_id))
 #120 studies!
+
+saveRDS(df_main,'vl_final.RDS')
+rm(df_all)
+rm(df)
+rm(df1)
+rm(c1)
+rm(c2)
 ```
 
 
 Overall Meta-analysis : Subgroup analysis
 ```{r echo=FALSE, message=FALSE, warning=FALSE}
 print("Meta-analysis overall")
+df_main<-readRDS('vl_final.RDS')
 
 df_all<-subset(df_main,!df_main$frel<0)
 df_all<-subset(df_all,!is.na(df_all$n_icured))
+table(df_main$n_relapse)
+
+df_all<-subset(df_main,!df_main$n_relapse<0) #No -ve values, but removing NAs as well!
+table(df_all$n_relapse)
 
 
-df_all<-subset(df_main,!df_main$n_relapse<0)
 
 m_all<- metaprop(
   data = df_all,

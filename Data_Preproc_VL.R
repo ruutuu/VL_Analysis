@@ -2,7 +2,7 @@ library(readr)
 
 setwd("~/IDDO/Data")
 data <- read_csv("VL_maindata.csv")
-#VL main data was marked for all the columns that might be necessary fot hte analysis (110 selected out of 350+)
+#VL main data was marked for all the columns that might be necessary fort tte analysis (110 selected out of 350+)
 #Go change row number 1, put 1 above the column you need and run the script
 
 #Following script selects the columns which were marked in the excel sheet
@@ -56,11 +56,11 @@ new_df<-as.data.frame(new_df)
 # First coerce the data.frame to all-character
 df2 = data.frame(lapply(new_df, as.character), stringsAsFactors=FALSE)
 df2<-subset(df2, df2$st_status==" Published")
+
 # write file
 write.csv(df2,"vldata_clean_1125.csv")
 #Manually cleaned for study #163, 166, 167, 181 (Unpublished single rows): 1 study arm
 #Replaced NA with Blank
 #Deleted additional row created
-#Stored it as vldata_clean
+#Stored it as vldata_clean_date
 
-#-------------------
