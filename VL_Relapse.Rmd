@@ -324,7 +324,9 @@ df_main<-subset(df_main,!df_main$frel<0)
 length(unique(df_main$pub_id))
 #120 studies!
 
-saveRDS(df_main,'vl_final.RDS')
+
+df_final<-subset(df_main,!df_main$n_relapse<0)
+saveRDS(df_final,'vl_final.RDS')
 rm(df_all)
 rm(df)
 rm(df1)
