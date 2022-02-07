@@ -23,7 +23,7 @@ setwd("C:/Users/Rutuja Chhajed/OneDrive - Nexus365/IDDO/Data")
 #Pre-processed data (see Prepoc.R for the steps)
 #Pick up latest cleaned file
 #Check OneNote for the latest version
-vl_main <-read_csv("vldata_clean_1129.csv")
+vl_main <-read_csv("VL_cleandata_0201.csv")
 length(unique(vl_main$pub_id)) #160 studies!
 
 #Additional variables from the vl_studydesign: Relapse definitions, severe cases inclusion, type if VL cases.
@@ -89,12 +89,9 @@ df<-vl_main[,c('pub_id',
                'st_status',
                'st_design',
                'st_allocation',
-               'st_country_num',	
-               'st_country1',
                'st_region',
                'sa_num_tx'	,
                'sa_num_followup',
-               'sa_combi',
                'sa_intv1_drug',
                'sa_intv1_dose_mgkg',
                'sa_intv1_freq_discrete',
@@ -107,7 +104,8 @@ df<-vl_main[,c('pub_id',
                'sa_intv2_freq_discrete',
                'sa_intv2_dura',
               'sa_intv2_reg_detail',
-              'me_diag')]
+               "total_relapse",
+              "relapse_6l", "relapse_6","relapse_6_12","issue","relapse_time")]
 
 #combining all variables in one df
 #Unique ID for every study & arm
@@ -140,7 +138,7 @@ df<-subset(df0,df0$st_status=="Published")
 length(unique(df$pub_id))
 
 df<-left_join(df,vl_sae,by='id')
-df<-left_join(df,vl_6monthplus_relapse ,by='id')
+#df<-left_join(df,vl_6monthplus_relapse ,by='id')
 
 length(unique(df0$pub_id))
 length(unique(df$pub_id))
@@ -275,7 +273,7 @@ df_all$n_relapse<-ifelse(df_all$eff_arm_relapse_num==0,0.5,df_all$eff_arm_relaps
 df_all$n_ifail<-df_all$sa_num_tx-df_all$n_icured
 df_all$eff_arm_relapse_num<-NULL
 
-df_all[,c("number_of_deaths","n_SAEs","pkdl")]<-sapply(df_all[,c("number_of_deaths","n_SAEs","pkdl")], as.numeric)
+df_all[,c("number_of_deaths","n_SAEs")]<-sapply(df_all[,c("number_of_deaths","n_SAEs")], as.numeric)
 df_all<-as.data.frame(df_all)
 
 #Defining the composite measure:Initial Failures, Relapses and deaths!!!
