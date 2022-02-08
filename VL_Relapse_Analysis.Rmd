@@ -4,7 +4,7 @@ Analysis and results:
 1) Overall proportion of relapse: Overall
 ```{r echo=FALSE, message=FALSE, warning=FALSE}
 setwd("C:/Users/Rutuja Chhajed/OneDrive - Nexus365/IDDO/Analysis/VL_Analysis")
-df_main<-readRDS('vl_final.RDS')
+df_all<-readRDS('vl_final.RDS')
 length(unique(df_all$pub_id))
 
 #114 studies finnaly in our analysis!
@@ -20,6 +20,9 @@ m_all<- metaprop(
 )
 summary(m_all)
 
+
+metabias(m_all,method.bias = "Egger")
+trimfill(m_all)
 
 #1.1: By drug category
 
