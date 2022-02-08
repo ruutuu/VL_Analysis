@@ -17,13 +17,29 @@ III) Filtering out studies:
 
 ```{r message=FALSE, warning=FALSE, include=FALSE}
 
+library(readr)
+library(readxl)
+# meta-analysis packages
+library(meta)
+library(metafor)
+#library(metagen)
+library(metasens) 
+# graphics packages
+library(tidyverse)
+library(reshape)
+library(doBy)
+library(stringr)
+library(ggpubr)
+library(patchwork)
+library(dplyr)
+library(data.table)
 setwd("C:/Users/Rutuja Chhajed/OneDrive - Nexus365/IDDO/Data")
 
 #D1: VLDATA_CLEAN
 #Pre-processed data (see Prepoc.R for the steps)
 #Pick up latest cleaned file
 #Check OneNote for the latest version
-vl_main <-read_csv("VL_cleandata_0201.csv")
+vl_main <-read_csv("VL_cleandata_0202.csv")
 length(unique(vl_main$pub_id)) #160 studies!
 
 #Additional variables from the vl_studydesign: Relapse definitions, severe cases inclusion, type if VL cases.
@@ -65,15 +81,6 @@ vl_sae$id<-paste0(vl_sae$Tag,"_",vl_sae$Repeat.Instance )
 vl_sae$Tag<-NULL
 vl_sae$Repeat.Instance<-NULL
 
-#D4: DATA ON RELAPSES AT DIFF TIMEPOINTS: VL_6MONTHPLUS_RELAPSE
-#Variables for relapses at 6l, 6, 6p (Extracted manually by RC, PD)
-setwd("C:/Users/Rutuja Chhajed/OneDrive - Nexus365/IDDO/Data")
-vl_6monthplus_relapse <- read_excel("vl_6monthplus_relapse.xlsx")
-vl_6monthplus_relapse$id<-paste0(vl_6monthplus_relapse$pub_id,"_",vl_6monthplus_relapse$redcap_repeat_instance)
-vl_6monthplus_relapse$pub_id<-NULL
-vl_6monthplus_relapse$redcap_repeat_instance<-NULL
-
-
 setwd("C:/Users/Rutuja Chhajed/OneDrive - Nexus365/IDDO/Data")
 drug_cat <- read_excel("DrugCategories.xlsx", sheet = "drug_category")
 
@@ -81,7 +88,7 @@ df<-vl_main[,c('pub_id',
                'st_intv_arms',
                'redcap_repeat_instance',
                'st_followup',
-              'me_hiv_yn',
+               'me_hiv_yn',
                'eff_arm_icure_num',
                'eff_arm_icure_days',
                'eff_arm_relapse_num',
@@ -95,23 +102,23 @@ df<-vl_main[,c('pub_id',
                'sa_intv1_drug',
                'sa_intv1_dose_mgkg',
                'sa_intv1_freq_discrete',
-              'sa_intv1_freq_new',
-              'sa_int1_total_dose',
+               'sa_intv1_freq_new',
+               'sa_int1_total_dose',
                'sa_intv1_dura',
                'sa_intv1_reg_detail' ,
                'sa_intv2_drug',
                'sa_intv2_dose_mgkg',
                'sa_intv2_freq_discrete',
                'sa_intv2_dura',
-              'sa_intv2_reg_detail',
+               'sa_intv2_reg_detail',
                "total_relapse",
-              "relapse_6l", "relapse_6","relapse_6_12","issue","relapse_time")]
+               "relapse_6l", "relapse_6","relapse_6_12","issue","relapse_time")]
 
 #combining all variables in one df
 #Unique ID for every study & arm
 df$id<-paste0(df$pub_id,"_",df$redcap_repeat_instance)
-
-df0<-left_join(df,vl_sev,by="id")  #
+df<-left_join(df,vl_sae,by='id')
+df0<-left_join(df,vl_sev,by="id")  
 colnames(relapse_def)[1]<-"pub_id"
 df0<-left_join(df0,relapse_def,by="pub_id")
  
@@ -119,9 +126,6 @@ df0$tag<-NULL
 df0$Arm_ID<-NULL
 df0$arm_no<-NULL
 length(unique(df0$pub_id))
-
-
-
 ```
 
 
@@ -134,11 +138,10 @@ Not removing those with NA as relapse num, because total_relapse (Manually creat
 #Subset unpublished studies-------------------------------------------------------------------------------------------------------
 #1) Already removed 22 studies in Preproc!!
 #182-22=160 now
+rm(df)
 df<-subset(df0,df0$st_status=="Published")
 length(unique(df$pub_id))
 
-df<-left_join(df,vl_sae,by='id')
-#df<-left_join(df,vl_6monthplus_relapse ,by='id')
 
 length(unique(df0$pub_id))
 length(unique(df$pub_id))
@@ -212,12 +215,14 @@ df_all$drugcat<-ifelse(df_all$dcat==0,df_all$drug_cat_others,df_all$dcat)
 drugcatlist<-unique(df_all$drugcat)
 length(unique(df_all$pub_id))
 
-
-#----------------------------------------------------------------------------------------------------------------------------------------------------------------
 ```
 
 Separating relapses at 6 month and later. 
-Creating new variables to mark that. Using our excel (vl_6 monthplus where we manually filled relapses at 6l, 6 and 6p)
+Creating new variables to mark that. 
+Using our variables we manually filled relapses at 6l, 6 and 6p)
+~Studies saying follow-up time of 12 months: Need to separate relapses at 6 month and post 6 months
+~Studies saying follow-up of 12 months but relapses at 6 month only: use the data filled by RC/PD
+~Incorrect numbers: Corrected by RC/PD, to be overwritten.
 ```{r}
 #Marking ones with 180 day follow-up: Categorizing studies by measurement of relapse time: 
 
@@ -235,15 +240,15 @@ df_all$rmt180<-ifelse(df_all$eff_arm_relapse_days==180,1,
 #Final relapse number variable at 180 days: frel180
 
 df_all$frel180<-ifelse(df_all$eff_arm_relapse_days==180&is.na(df_all$relapse_6_12),df_all$eff_arm_relapse_num, 
-                       #180 days FU and no value for relapse at 6-12m, take main value
-              ifelse(df_all$eff_arm_relapse_days==180&!is.na(df_all$relapse_6_12),rowSums(df_all[,c("relapse_6l","relapse_6")],na.rm=TRUE),
-                       #180 days FU and some value for relapse at 6-12m, DO NOT take main value, take relapses till 6 months ONLY!
-                                ifelse(df_all$rmt180==2,rowSums(df_all[,c("relapse_6l","relapse_6")],na.rm = TRUE),NA)))
-                       #180+ days FU and relapses reported at 6m--Definitely value at relapse_6-12, take relapses till 6 months ONLY! 
-                      #For those with ?180 FU, no value at 6m, NA!
+          #1.180 days FU and no value for relapse at 6-12m, take main value
+        ifelse(df_all$eff_arm_relapse_days==180&!is.na(df_all$relapse_6_12),rowSums(df_all[,c("relapse_6l","relapse_6")],na.rm=TRUE),
+          #2.180 days FU and some value for relapse at 6-12m, DO NOT take main value, take relapses till 6 months ONLY!
+        ifelse(df_all$rmt180==2,rowSums(df_all[,c("relapse_6l","relapse_6")],na.rm = TRUE),NA)))
+        #3.#180+ days FU and relapses reported at 6m--Definitely value at relapse_6-12, take relapses till 6 months ONLY! 
+          #For those with >180 FU, no value at 6m, NA! (rmt==0)
 
 
-#Some studies with relapse_time less than 180!! 
+#Some studies with relapse_time less than 180!! No: removed already!
 
 
 #Marking ones with 180-360 day follow-up: Categorizing studies by measurement of relapse time: 
@@ -291,22 +296,31 @@ df_main<-df_all
 
 #frel will have total number of relapses
 df_main$frel<-rowSums(df_main[c('frel180','frel360')],na.rm = TRUE)
+```
+
+Studies with issues: 
+1. Ones with mismatch of follow-up times nad relapse numbers.
+2. Incorrect numbers reported
+
+
+```{r}
+
 #Checking how many with rmt180 and rmt360==0
 #Some studies are missed this way, need to put values from redcap (n_relapse)
 
 c1<-subset(df_main,df_main$rmt180==0&df_main$rmt360==0)
- c11<-subset(c1,c1$eff_arm_relapse_days>180) #Check these studies. Relapse days written as >180 in redcap, and we are taking it as it is. 
+c11<-subset(c1,c1$eff_arm_relapse_days>180) #Check these studies. Relapse days written as >180 in redcap, and we are taking it as it is. 
 #Logic: If eff_relapse_days written incorrectly as >180,?
 
-df_main$rmt360n<-ifelse(df_main$rmt180==0&df_main$rmt360==0&df_main$eff_arm_relapse_days>=180,1,df_main$rmt360)
+df_main$rmt360n<-ifelse(df_main$rmt180==0&df_main$rmt360==0&df_main$eff_arm_relapse_days>180,1,df_main$rmt360)
 df_main$rmt180n<-ifelse(df_main$rmt180==0&df_main$rmt360==0&df_main$eff_arm_relapse_days<180,1,df_main$rmt180)
 
-df_main$frel360n<-ifelse(df_main$rmt180==0&df_main$rmt360==0&df_main$eff_arm_relapse_days>=180,df_main$n_relapse,df_main$frel360)
+df_main$frel360n<-ifelse(df_main$rmt180==0&df_main$rmt360==0&df_main$eff_arm_relapse_days>180,df_main$n_relapse,df_main$frel360)
 df_main$frel180n<-ifelse(df_main$rmt180==0&df_main$rmt360==0&df_main$eff_arm_relapse_days<180,df_main$n_relapse,df_main$frel180)
 df_main$freln<-rowSums(df_main[c('frel180n','frel360n')],na.rm = TRUE)
 
 
-df_main$relapse_timen<-ifelse(df_main$rmt180==0&df_main$rmt360==0&df_main$eff_arm_relapse_days>=180,df_main$eff_arm_relapse_days,df_main$relapse_time)
+df_main$relapse_timen<-ifelse(df_main$rmt180==0&df_main$rmt360==0&df_main$eff_arm_relapse_days>180,df_main$eff_arm_relapse_days,df_main$relapse_time)
 table(df_main$frel-df_main$freln)
 c2<-subset(df_main,df_main$rmt180n==0&df_main$rmt360n==0)
 
@@ -322,6 +336,21 @@ df_main<-subset(df_main,!df_main$frel<0)
 length(unique(df_main$pub_id))
 #120 studies!
 
+#Only for studies with issue=NM, replace the rel with those written manually (relapse_6, relapse_6-12)
+#For others (Match or NA values (unverified vlaues, keep it the same!))
+#Be careful about the use of NAs in inelse statements.
+
+df_main$frel180n<-ifelse((!df_main$issue=="NM"| is.na(df_main$issue)),df_main$frel180,rowSums(df_main[,c("relapse_6l","relapse_6")]))
+
+
+df_main$frel360n<-ifelse((!df_main$issue=="NM"| is.na(df_main$issue)),df_main$frel360,df_main$relapse_6_12)
+df_main$freln<-rowSums(df_main[c('frel180n','frel360n')],na.rm = TRUE)
+
+df_main$frel<-df_main$freln
+df_main$frel180<-df_main$frel180n
+df_main$frel360<-df_main$frel360n
+df_main[,c("frel180n","frel360n","freln")]<-NULL
+
 
 df_final<-subset(df_main,!df_main$n_relapse<0)
 saveRDS(df_final,'vl_final.RDS')
@@ -331,3 +360,4 @@ rm(df1)
 rm(c1)
 rm(c2)
 ```
+
