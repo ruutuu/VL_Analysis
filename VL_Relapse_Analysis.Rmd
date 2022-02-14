@@ -1,52 +1,174 @@
 Analysis and results:
 
+Function to extract results:
+```{r}
+
+#Extract estimates from the copas object.
+#Make a function: Input= Copas object; Output data frame
+
+m_extract<-function(m_adj,catname){
+  
+#1. Estimate
+est<-exp(m_adj$TE.adjust)/(1+exp(m_adj$TE.adjust))
+#2. Lower and upper bound
+lb<-exp(m_adj$lower.adjust)/(1+exp(m_adj$lower.adjust))
+ub<-exp(m_adj$upper.adjust)/(1+exp(m_adj$upper.adjust))
+
+#3. I2 value
+i2<-m_adj$x$I2
+
+#4. Lower and upper bound for I2
+i2lb<-m_adj$x$lower.I2
+i2ub<-m_adj$x$upper.I2
+
+#5. Calculation of prediction interval
+#se<-m_adj$seTE.adjust
+
+#pilb<-est-t*sqrt(i2^2+se^2)
+op<-as.data.frame(t(as.data.frame(c(est, lb, ub, i2, i2lb, i2ub))))
+colnames(op)<-c("Est","Lb","Ub","I2","I2lb","I2ub")
+rownames(op)<-NULL
+
+
+op <- sapply(op,as.numeric)
+op <- sapply(op, function(x) round(x,2))
+
+op<-as.data.frame(t(op))
+op$name<-catname
+
+return(op)
+}
+
+```
+
 
 1) Overall proportion of relapse: Overall
 ```{r echo=FALSE, message=FALSE, warning=FALSE}
+
+library(readr)
+library(readxl)
+# meta-analysis packages
+library(meta)
+library(metafor)
+#library(metagen)
+library(metasens) 
+# graphics packages
+library(tidyverse)
+library(reshape)
+library(doBy)
+library(stringr)
+library(ggpubr)
+library(patchwork)
+library(dplyr)
+library(data.table)
+
+
 setwd("C:/Users/Rutuja Chhajed/OneDrive - Nexus365/IDDO/Analysis/VL_Analysis")
 df_all<-readRDS('vl_final.RDS')
 length(unique(df_all$pub_id))
+#114 studies finally in our analysis!
 
-#114 studies finnaly in our analysis!
-table(df_all$n_relapse)
+#1. Overall estimate at 6 months and overall 
+catname<-"Overall"
+m<- metaprop(  data = df_all,  event =frel,  n=n_icured,   sm = "PLOGIT",  prediction=TRUE)
+summary(m)
 
+metabias(m,method.bias = "Egger")
+#p<0.001
+m_adj<-copas(m, gamma0.range=c(-2,5), gamma1.range=c(0,2))
+o1<-m_extract(m_adj,catname)
 
-m_all<- metaprop(
-  data = df_all,
-  event =frel,
-  n=n_icured, 
-  sm = "PLOGIT",
-  prediction=TRUE
-)
-summary(m_all)
+catname<-"Overall-6m"
+m<- metaprop(  data = df_all,  event =frel180,  n=n_icured,   sm = "PLOGIT",  prediction=TRUE)
+summary(m)
 
+metabias(m,method.bias = "Egger")
+#p<0.001
 
-metabias(m_all,method.bias = "Egger")
-trimfill(m_all)
+m_adj<-copas(m, gamma0.range=c(-2,5), gamma1.range=c(0,2))
+o2<-m_extract(m_adj,catname)
+```
 
-#1.1: By drug category
-
-m_all.drugcat<-update.meta(m_all, 
-            byvar=drugcat,
-            comb.random = TRUE, 
-            comb.fixed = F)
-
-print("Meta-analysis by drug Category")
-summary(m_all.drugcat)
-
-
-#1.2: By region
-m_all.region<-update.meta(m_all, 
-            byvar=st_region,
-            comb.random = TRUE, 
-            comb.fixed = F)
-
-print("Meta-analysis by Region")
-summary(m_all.region)
+2) By region
+```{r}
+#1.2: By region at 6months
+region<-unique(df_all$st_region)
+#Carrying meta analysis for all regions nad storing them in mr1, mr2...
+for (i in 1:6){df_tmp<-subset(df_all,df_all$st_region==region[i])
+               m_tmp<- metaprop(data = df_tmp,  event =frel180,  n=n_icured,   sm = "PLOGIT",  prediction=TRUE)
+               assign(paste0("m_reg",i),m_tmp)}
 
 
+m_adj<-copas(m_reg1, gamma0.range=c(-2,5), gamma1.range=c(0,2))
+catname=m_adj$x$data$st_region[1]
+or1<-m_extract(m_adj,catname)
+
+m_adj<-copas(m_reg2, gamma0.range=c(-2,5), gamma1.range=c(0,2))
+catname=m_adj$x$data$st_region[1]
+or2<-m_extract(m_adj,catname)
+
+m_adj<-copas(m_reg3, gamma0.range=c(-2,5), gamma1.range=c(0,2))
+catname=m_adj$x$data$st_region[1]
+or3<-m_extract(m_adj,catname)
+
+m_adj<-copas(m_reg4, gamma0.range=c(-2,5), gamma1.range=c(0,2))
+catname=m_adj$x$data$st_region[1]
+or4<-m_extract(m_adj,catname)
+
+m_adj<-copas(m_reg5, gamma0.range=c(-2,5), gamma1.range=c(0,2))
+catname=m_adj$x$data$st_region[1]
+or5<-m_extract(m_adj,catname)
+
+m_adj<-copas(m_reg6, gamma0.range=c(-2,5), gamma1.range=c(0,2))
+catname=m_adj$x$data$st_region[1]
+or6<-m_extract(m_adj,catname)
+
+m_table<-rbind(o1, o2, or1, or2,or3, or4, or5, or6)
+rm(o1, o2, or1,or2,or3, or4, or5, or6)
+rm(m_reg1, m_reg2, m_reg3, m_reg4, m_reg5, m_reg6)
+rm(m_adj, m)
+
+```
+
+
+
+3) By drug regimen
+```{r}
+#1.3: By drug
+drug<-unique(df_all$drugcat)
+#Carrying meta analysis for all regions nad storing them in mr1, mr2...
+for (i in 1:17){
+  df_tmp<-subset(df_all,df_all$drugcat==drug[i])
+               m_tmp<- metaprop(data = df_tmp,  event =frel180,  n=n_icured,   sm = "PLOGIT",  prediction=TRUE)
+               assign(paste0("m_drug",i),m_tmp)}
+
+
+m_adj<-copas(m_drug1, gamma0.range=c(-2,5), gamma1.range=c(0,2))
+catname=m_adj$x$data$drugcat[1]
+od1<-m_extract(m_adj,catname)
+rm(m_adj)
+
+
+```
+
+
+
+
+4) Relapse diagnosis method
+
+```{r}
 #1.3: Relapse Diagnosis Method
 
+relapse_method<-unique(df_all$relapse_method)
+#Carrying meta analysis for all regions and storing them in mr1, mr2...
+for (i in 1:8){df_tmp<-subset(df_all,df_all$relapse_method==relapse_method[i])
+               m_tmp<- metaprop(data = df_tmp,  event =frel180,  n=n_icured,   sm = "PLOGIT",  prediction=TRUE)
+               assign(paste0("m_drug",i),m_tmp)}
+
+```
+
+
+```{r}
 m_all.reldiag<-update.meta(m_all, 
             byvar= rel_diag,
             comb.random = TRUE, 
