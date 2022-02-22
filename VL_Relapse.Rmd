@@ -39,7 +39,7 @@ setwd("C:/Users/Rutuja Chhajed/OneDrive - Nexus365/IDDO/Data")
 #Pre-processed data (see Prepoc.R for the steps)
 #Pick up latest cleaned file
 #Check OneNote for the latest version
-vl_main <-read_csv("VL_cleandata_0202.csv")
+vl_main <-read_csv("VL_cleandata_0222.csv")
 length(unique(vl_main$pub_id)) #160 studies!
 
 #Additional variables from the vl_studydesign: Relapse definitions, severe cases inclusion, type if VL cases.
@@ -296,6 +296,7 @@ df_main<-df_all
 
 #frel will have total number of relapses
 df_main$frel<-rowSums(df_main[c('frel180','frel360')],na.rm = TRUE)
+df_main$frel<-ifelse(is.na(df_main$frel180)&is.na(df_main$frel360),NA,df_main$frel) #To ensure NA+NA is not 0!
 ```
 
 Studies with issues: 
@@ -352,7 +353,13 @@ df_main$frel360<-df_main$frel360n
 df_main[,c("frel180n","frel360n","freln")]<-NULL
 
 
-df_final<-subset(df_main,!df_main$n_relapse<0)
+df_final<-subset(df_main,!df_main$frel<0)
+
+df_final$n_relapse<-NULL
+df_final$dcat<-NULL
+df_final$drug_cat_others<-NULL
+df_final$drug_group<-NULL
+df_final$drug_group_for_analysis
 saveRDS(df_final,'vl_final.RDS')
 rm(df_all)
 rm(df)
@@ -360,4 +367,11 @@ rm(df1)
 rm(c1)
 rm(c2)
 ```
+
+
+
+
+
+
+
 
