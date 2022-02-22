@@ -233,8 +233,9 @@ Using our variables we manually filled relapses at 6l, 6 and 6p)
 #Important to treat NA and 0 differently. If NA/no info at 6 months, relapse_measurement_time (rmt) cannot be 180!
 #If it is 0 at 6 months, can be included, rmt can be 180
 
-df_all$rmt180<-ifelse(df_all$eff_arm_relapse_days==180,1,
-                      ifelse(df_all$eff_arm_relapse_days>180&(!is.na(df_all$relapse_6)),2,0))
+df_all$rmt180<-ifelse(df_all$eff_arm_relapse_days==180&is.na(df_all$relapse_6_12),1,
+                      ifelse(df_all$eff_arm_relapse_days>180&(!is.na(df_all$relapse_6)),2,
+                             ifelse(df_all$eff_arm_relapse_days==180& (!is.na(df_all$relapse_6_12)),2,0 )))
 
 
 #Final relapse number variable at 180 days: frel180
