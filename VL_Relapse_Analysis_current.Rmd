@@ -1,0 +1,1080 @@
+Analysis and results:
+
+#Initialization
+Loading libraries, functions and data
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+
+library(readr)
+library(readxl)
+# meta-analysis packages
+library(meta)
+library(metafor)
+#library(metagen)
+library(metasens) 
+# graphics packages
+library(tidyverse)
+library(reshape)
+library(doBy)
+library(stringr)
+library(ggpubr)
+library(patchwork)
+library(dplyr)
+library(data.table)
+
+
+setwd("C:/Users/Rutuja Chhajed/OneDrive - Nexus365/IDDO/Analysis/VL_Analysis")
+source("MA_extract_functions.R")
+
+#Make sure to pick up the latest data file
+df_all<-readRDS('vl_final.RDS')
+
+
+
+#Making sure, frel (Total relapses)= NA and nor 0, if values are not reported. What about the ones reporting only total?
+df_all$frel<-ifelse(is.na(df_all$frel180)&is.na(df_all$frel360),NA,df_all$frel)
+length(unique(df_all$pub_id))
+#120 studies finally in our analysis!
+
+
+```
+
+
+#Results I)
+##1) Overall proportion of relapse: Overall
+```{r}
+#1. Overall estimate at 6 months and overall 
+catname<-"Overall"
+m<- metaprop(  data = df_all,  event =frel,  n=n_icured,   sm = "PLOGIT",  prediction=TRUE)
+summary(m)
+
+metabias(m,method.bias = "Egger")
+#p<0.001
+m_adj<-copas(m, gamma0.range=c(-3,5), gamma1.range=c(-1,2))
+m_adj
+o1<-m_extract(m_adj,catname)
+rm(m,m_adj)
+
+catname<-"Overall-6m"
+m<- metaprop(  data = df_all,  event =frel180,  n=n_icured,   sm = "PLOGIT",  prediction=TRUE)
+summary(m)
+
+metabias(m,method.bias = "Egger")
+#p<0.001
+
+m_adj<-copas(m, gamma0.range=c(-2,5), gamma1.range=c(-1,2))
+m_adj
+o2<-m_extract(m_adj,catname)
+
+
+m_table<-rbind(o1,o2)
+rm(o1,o2)
+```
+
+###**Checking sub-group differences: Drug, case-mix and relapse method
+
+```{r}
+
+m_region<-update.meta(m, 
+            byvar=st_region, 
+            comb.random = TRUE, 
+            comb.fixed = F)
+#p=0.0082
+m_drug<-update.meta(m, 
+            byvar=drugcat, 
+            comb.random = TRUE, 
+            comb.fixed = F)
+#p<0.0001
+
+m_casemix<-update.meta(m, 
+            byvar=cases_grouped, 
+            comb.random = TRUE, 
+            comb.fixed = F)
+
+#p=0.0753
+m_relapsemethod<-update.meta(m, 
+            byvar=rel_diag, 
+            comb.random = TRUE,
+            comb.fixed = F)
+
+#p=0.1346
+
+#Decade
+#p=0.0181
+```
+
+
+##2) By region
+```{r message=FALSE, warning=FALSE, include=FALSE}
+#1.2: By region at 6 months
+region<-unique(df_all$st_region)
+b_pval<-NULL
+#Carrying meta analysis for all regions and storing them in mr1, mr2...
+for (i in 1:6){
+  df_tmp<-subset(df_all,df_all$st_region==region[i])
+               m_tmp<- metaprop(data = df_tmp,  event =frel180,  n=n_icured,   sm = "PLOGIT",  prediction=TRUE)
+               assign(paste0("m_reg",i),m_tmp)}
+
+
+m_adj<-copas(m_reg1, gamma0.range=c(-2,5), gamma1.range=c(0,2))
+catname=m_adj$x$data$st_region[1]
+or1<-m_extract(m_adj,catname)
+pv<-metabias(m_reg1,method.bias = "Egger")
+b_pval<-rbind(b_pval,c(catname,pv$p.value))
+rm(pv)
+#p-value = 0.0002
+
+m_adj<-copas(m_reg2, gamma0.range=c(-2,5), gamma1.range=c(0,2))
+catname=m_adj$x$data$st_region[1]
+or2<-m_extract(m_adj,catname)
+pv<-metabias(m_reg2,method.bias = "Egger",k.min = 5)
+b_pval<-rbind(b_pval,c(catname,pv$p.value))
+rm(pv)
+#(k=6) too small to test for small study effects 
+
+
+m_adj<-copas(m_reg3, gamma0.range=c(-2,5), gamma1.range=c(0,2))
+m_unadj<-m_reg3
+catname=m_unadj$data$st_region[1]
+or3<-m_extract0(m_unadj,catname)
+pv<-metabias(m_reg3,method.bias = "Egger")
+b_pval<-rbind(b_pval,c(catname,pv$p.value))
+rm(pv)
+# p-value = 0.1132
+catname=m_adj$x$data$st_region[1]
+or3<-m_extract(m_adj,catname)
+metabias(m_reg3,method.bias = "Egger")
+
+###
+
+m_adj<-copas(m_reg4, gamma0.range=c(-2,5), gamma1.range=c(0,2))
+catname=m_adj$x$data$st_region[1]
+or4<-m_extract(m_adj,catname)
+pv<-metabias(m_reg4,method.bias = "Egger",k.min=5)
+# (k=8) too small to test for small study effects
+b_pval<-rbind(b_pval,c(catname,pv$p.value))
+rm(pv)
+
+m_adj<-copas(m_reg5, gamma0.range=c(-2,5), gamma1.range=c(0,2))
+catname=m_adj$x$data$st_region[1]
+or5<-m_extract(m_adj,catname)
+pv<-metabias(m_reg5,method.bias = "Egger",k.min=5)
+b_pval<-rbind(b_pval,c(catname,pv$p.value))
+rm(pv)
+# (k=8) too small to test for small study effects
+
+
+m_adj<-copas(m_reg6, gamma0.range=c(-2,5), gamma1.range=c(0,2))
+catname=m_adj$x$data$st_region[1]
+or6<-m_extract(m_adj,catname)
+pv<-metabias(m_reg6,method.bias = "Egger",k.min=5)
+b_pval<-rbind(b_pval,c(catname,pv$p.value))
+rm(pv)
+# (k=7) too small to test for small study effects
+
+m_table<-rbind(m_table, or1, or2,or3, or4, or5, or6)
+b_pval_reg<-b_pval
+rm(or1,or2,or3, or4, or5, or6)
+rm(m_reg1, m_reg2, m_reg3, m_reg4, m_reg5, m_reg6)
+rm(m_adj, m)
+
+
+```
+
+
+
+##3) By drug regimen
+```{r}
+#1.3: By drug
+drug<-unique(df_all$drugcat)
+ptemp<-NULL
+#Carrying meta analysis for all regions nad storing them in mr1, mr2...
+for (i in 1:17){
+  d=drug[i]
+  df_tmp<-subset(df_all, df_all$drugcat== d)
+               m_tmp<- metaprop(data = df_tmp,  event =frel180,  n=n_icured,   sm = "PLOGIT",  prediction=TRUE)
+               pvtemp<-metabias(m_tmp,method.bias = "Egger",k.min=5)
+               assign(paste0("m_drug",i),m_tmp)
+               ptemp<-rbind(ptemp,c(d,pvtemp$p.value))
+               }
+               
+
+
+m_adj<-copas(m_drug1, gamma0.range=c(-2,5), gamma1.range=c(0,2))
+m_adj
+catname=m_adj$x$data$drugcat[1]
+od1<-m_extract(m_adj,catname)
+metabias(m_drug1,method.bias = "Egger")
+# k small
+
+
+m_adj<-copas(m_drug2, gamma0.range=c(-2,5), gamma1.range=c(0,2))
+m_adj
+catname=m_adj$x$data$drugcat[1]
+od2<-m_extract(m_adj,catname)
+rm(m_adj)
+metabias(m_drug2,method.bias = "Egger")
+# p-value = 0.0815
+
+
+m_adj<-copas(m_drug3, gamma0.range=c(-2,5), gamma1.range=c(0,2))
+m_adj
+catname=m_adj$x$data$drugcat[1]
+od3<-m_extract(m_adj,catname)
+rm(m_adj)
+metabias(m_drug3,method.bias = "Egger")
+# p-value = 0.8776
+
+
+
+m_adj<-copas(m_drug4, gamma0.range=c(-2,5), gamma1.range=c(0,2))
+m_adj
+catname=m_adj$x$data$drugcat[1]
+od4<-m_extract(m_adj,catname)
+rm(m_adj)
+metabias(m_drug4,method.bias = "Egger")
+# p-value = k=9 too small
+
+
+#m_adj<-copas(m_drug5, gamma0.range=c(-2,5), gamma1.range=c(0,2))
+m_unadj<-m_drug5
+catname=m_unadj$data$drugcat[1]
+od5<-m_extract0(m_unadj,catname)
+
+
+rm(m_unadj)
+metabias(m_drug5,method.bias = "Egger")
+# p-value = k small
+
+
+
+
+m_adj<-copas(m_drug6, gamma0.range=c(-2,5), gamma1.range=c(0,2))
+m_adj
+catname=m_adj$x$data$drugcat[1]
+od6<-m_extract(m_adj,catname)
+rm(m_adj)
+metabias(m_drug6,method.bias = "Egger")
+# p-value = 0.0053
+
+
+
+m_adj<-copas(m_drug7, gamma0.range=c(-2,5), gamma1.range=c(0,2))
+m_adj
+catname=m_adj$x$data$drugcat[1]
+od7<-m_extract(m_adj,catname)
+rm(m_adj)
+metabias(m_drug7,method.bias = "Egger")
+# p-value = k small
+
+
+
+m_adj<-copas(m_drug8, gamma0.range=c(-2,5), gamma1.range=c(0,2))
+m_adj
+catname=m_adj$x$data$drugcat[1]
+od8<-m_extract(m_adj,catname)
+rm(m_adj)
+metabias(m_drug8,method.bias = "Egger")
+# p-value = 0.229
+
+
+m_adj<-copas(m_drug9, gamma0.range=c(-2,5), gamma1.range=c(0,2))
+m_adj
+catname=m_adj$x$data$drugcat[1]
+od9<-m_extract(m_adj,catname)
+rm(m_adj)
+metabias(m_drug9,method.bias = "Egger")
+# p-value = 0.0028
+
+
+m_adj<-copas(m_drug10, gamma0.range=c(-2,5), gamma1.range=c(0,2))
+m_adj
+catname=m_adj$x$data$drugcat[1]
+od10<-m_extract(m_adj,catname)
+rm(m_adj)
+metabias(m_drug10,method.bias = "Egger")
+# p-value =  0.7672
+
+
+
+m_adj<-copas(m_drug11, gamma0.range=c(-2,5), gamma1.range=c(0,2))
+m_adj
+catname=m_adj$x$data$drugcat[1]
+od11<-m_extract(m_adj,catname)
+rm(m_adj)
+metabias(m_drug11,method.bias = "Egger")
+# p-value =  k small
+
+
+m_adj<-copas(m_drug12, gamma0.range=c(-2,5), gamma1.range=c(0,2))
+m_adj
+catname=m_adj$x$data$drugcat[1]
+od12<-m_extract(m_adj,catname)
+rm(m_adj)
+metabias(m_drug12,method.bias = "Egger")
+# p-value =  k small
+
+m_adj<-copas(m_drug13, gamma0.range=c(-2,5), gamma1.range=c(0,2))
+m_adj
+catname=m_adj$x$data$drugcat[1]
+od13<-m_extract(m_adj,catname)
+rm(m_adj)
+metabias(m_drug13,method.bias = "Egger")
+# p-value =  0.34
+
+
+m_adj<-copas(m_drug14, gamma0.range=c(-2,5), gamma1.range=c(0,2))
+m_adj
+catname=m_adj$x$data$drugcat[1]
+od14<-m_extract(m_adj,catname)
+rm(m_adj)
+metabias(m_drug14,method.bias = "Egger")
+# p-value = k small
+
+m_adj<-copas(m_drug15, gamma0.range=c(-2,5), gamma1.range=c(0,2))
+m_adj
+catname=m_adj$x$data$drugcat[1]
+od15<-m_extract(m_adj,catname)
+rm(m_adj)
+metabias(m_drug15,method.bias = "Egger")
+# p-value =  0.94
+
+#m_adj<-copas(m_drug5, gamma0.range=c(-2,5), gamma1.range=c(0,2))
+m_unadj<-m_drug17
+catname=m_unadj$data$drugcat[1]
+od17<-m_extract0(m_unadj,catname)
+
+
+rm(m_unadj)
+metabias(m_drug17,method.bias = "Egger")
+# p-value = k small
+
+m_table<-rbind(m_table, od1, od2, od3, od4,  od6, od7, od8, od9, od10, od11, od12, od13, od14, od15, od17)
+rm(m_drug1, m_drug2, m_drug3, m_drug4, m_drug5, m_drug6, m_drug7, m_drug8, m_drug9, m_drug10, m_drug11, m_drug12, m_drug13, m_drug14, m_drug16,m_drug17, m_drug15, m_drug16,  m_drug17)
+
+rm(od1, od2, od3, od4, od5, od6, od7, od8, od9, od10, od11, od12, od13, od14, od15, od17)
+#Drug 16& 17: No. of studies too low
+```
+
+##4) Relapse diagnosis method
+
+```{r}
+#1.3: Relapse Diagnosis Method
+
+relapsediagmethod<-unique(df_all$rel_diag)
+#Carrying meta analysis for all regions and storing them in mr1, mr2...
+for (i in 1:4){
+   rel<-relapsediagmethod[i]
+   df_tmp<-subset(df_all,df_all$rel_diag==rel)
+               m_tmp<- metaprop(data = df_tmp,  event =frel180,  n=n_icured,   sm = "PLOGIT",  prediction=TRUE)
+                              assign(paste0("m_rel",i),m_tmp)
+
+               pvtemp<-metabias(m_tmp,method.bias = "Egger",k.min=5)
+               ptemp<-rbind(ptemp,c(rel,pvtemp$p.value))
+               
+               rm(m_tmp)}
+
+
+
+m_adj<-copas(m_rel1, gamma0.range=c(-2,5), gamma1.range=c(0,2))
+m_adj
+catname=m_adj$x$data$rel_diag[1]
+orel1<-m_extract(m_adj,catname)
+rm(m_adj)
+metabias(m_rel1,method.bias = "Egger")
+# p-value < 0.0001
+
+
+m_adj<-copas(m_rel2, gamma0.range=c(-2,5), gamma1.range=c(0,2))
+m_adj
+catname=m_adj$x$data$rel_diag[1]
+orel2<-m_extract(m_adj,catname)
+rm(m_adj)
+metabias(m_rel2,method.bias = "Egger")
+# p-value =0.148
+
+
+m_adj<-copas(m_rel3, gamma0.range=c(-2,5), gamma1.range=c(-3,3))
+m_adj
+catname=m_adj$x$data$rel_diag[1]
+orel3<-m_extract(m_adj,catname)
+rm(m_adj)
+metabias(m_rel3,method.bias = "Egger")
+# p-value k small
+
+#Value changes a lot with gamma0! ( 4 to 5)
+
+m_adj<-copas(m_rel4, gamma0.range=c(-2,5), gamma1.range=c(0,2))
+m_adj
+catname=m_adj$x$data$rel_diag[1]
+orel4<-m_extract(m_adj,catname)
+rm(m_adj)
+metabias(m_rel4,method.bias = "Egger")
+# p-value k small
+
+m_table<-rbind(m_table, orel1, orel2, orel3, orel4)
+rm(m_rel1, m_rel2, m_rel3, m_rel4)
+rm(orel1, orel2, orel3, orel4)
+```
+
+
+##5) Case mix
+
+```{r}
+casemix<-unique(df_all$cases_grouped)
+
+for (i in 1:4){
+  cm<-casemix[i]
+   df_tmp<-subset(df_all,df_all$cases_grouped==cm)
+               m_tmp<- metaprop(data = df_tmp,  event =frel180,  n=n_icured,   sm = "PLOGIT",  prediction=TRUE)
+               assign(paste0("m_case",i),m_tmp)
+                pvtemp<-metabias(m_tmp,method.bias = "Egger",k.min=5)
+               ptemp<-rbind(ptemp,c(cm,pvtemp$p.value))
+               rm(m_tmp)}
+
+
+
+m_adj<-copas(m_case1, gamma0.range=c(-2,5), gamma1.range=c(0,2))
+m_adj
+catname=m_adj$x$data$cases_grouped[1]
+ocase1<-m_extract(m_adj,catname)
+rm(m_adj)
+metabias(m_case1,method.bias = "Egger")
+# p-value = 0.0004
+
+
+
+m_adj<-copas(m_case2, gamma0.range=c(-2,5), gamma1.range=c(0,2))
+m_adj
+catname=m_adj$x$data$cases_grouped[1]
+ocase2<-m_extract(m_adj,catname)
+rm(m_adj)
+metabias(m_case2,method.bias = "Egger")
+# p-value = 0.09
+
+
+m_adj<-copas(m_case3, gamma0.range=c(-2,5), gamma1.range=c(-3,3))
+m_adj
+catname=m_adj$x$data$cases_grouped[1]
+ocase3<-m_extract(m_adj,catname)
+rm(m_adj)
+metabias(m_case3,method.bias = "Egger")
+# p-value = 0.0001
+
+#Value changes a lot with gamma0! ( 4 to 5)
+
+m_adj<-copas(m_case4, gamma0.range=c(-2,5), gamma1.range=c(0,2))
+m_adj
+catname=m_adj$x$data$cases_grouped[1]
+ocase4<-m_extract(m_adj,catname)
+rm(m_adj)
+metabias(m_case4,method.bias = "Egger")
+# p-value = 0.9546
+
+
+m_table<-rbind(m_table, ocase1, ocase2, ocase3, ocase4)
+rm(m_case1, m_case2, m_case3, m_case4)
+rm(ocase1, ocase2, ocase3, ocase4)
+
+
+
+#Exploring unresponsive VL cases:
+
+df1<-subset(df_all, df_all$cases_grouped=="Unresponsive VL")
+```
+
+
+#Results IV) For Indian Subcontinent, LamB SD: Dosage and relapse relationship
+
+```{r}
+df_ind<-subset(df_all,df_all$st_region=="India Subcontinent")
+df_ind$sa_int1_total_dose<-as.numeric(df_ind$sa_int1_total_dose)
+
+df_ind1<-subset(df_ind,df_ind$drugcat=="LamB SD Mono")
+df_ind1<-subset(df_ind1,df_ind1$frel180>=0)
+
+df_ind1$sa_int1_total_dose<-as.numeric(df_ind1$sa_int1_total_dose)
+df_ind1$total_dose<-ifelse(df_ind1$sa_int1_total_dose<=5,1,ifelse(df_ind1$sa_int1_total_dose<=10,2,3))
+table(df_ind1$sa_int1_total_dose)
+table(df_ind1$total_dose)
+
+for (i in 1:3){
+   df_tmp<-subset(df_ind1,df_ind1$total_dose==i)
+               m_tmp<- metaprop(data = df_tmp,  event =frel180,  n=n_icured,   sm = "PLOGIT",  prediction=TRUE)
+               assign(paste0("m_dose",i),m_tmp)
+               rm(m_tmp)}
+
+
+#Do it manually: FILL IN THE UNADJUSTED VALUES
+#m_adj<-copas(m_dose1, gamma0.range=c(-2,5), gamma1.range=c(0,2))
+m_unadj<-m_dose1
+catname=m_unadj$data$total_dose[1]
+odose1<-m_extract0(m_unadj,catname)
+rm(m_unadj)
+metabias(m_dose1,method.bias = "Egger")
+
+
+
+#m_adj<-copas(m_dose2, gamma0.range=c(-2,5), gamma1.range=c(0,2))
+m_unadj<-m_dose2
+catname=m_unadj$data$total_dose[1]
+odose2<-m_extract0(m_unadj,catname)
+rm(m_unadj)
+metabias(m_dose2,method.bias = "Egger")
+# No. of study too small to study small study effect
+#Adjusted estimate very similar to unadj
+
+
+m_adj<-copas(m_dose3, gamma0.range=c(-2,5), gamma1.range=c(0,2))
+m_adj
+catname=m_adj$x$data$total_dose[1]
+odose3<-m_extract(m_adj,catname)
+rm(m_adj)
+metabias(m_dose3,method.bias = "Egger")
+# No. of study too small to study small study effect
+#Adjusted estimate very similar to unadj
+
+m_dose<-rbind(odose1,odose2,odose3)
+#Performs chi-squared test for trend in proportion. This test is also known as Cochran-Armitage trend test.
+#Wrappers around the R base function prop.trend.test() but returns a data frame for easy data visualization.
+
+
+df_ind1$n_defcure<-df_ind1$n_icured-df_ind1$frel180
+df_ind1$notf<-df_ind1$sa_num_tx-df_ind1$compo
+
+xtab<-as.table(cbind(df_ind1$frel180,df_ind1$n_defcure))
+xtab1<-as.table(cbind(df_ind1$compo,df_ind1$notf))
+
+library('rstatix')
+prop_trend_test(xtab,df_ind1$total_dose)
+#P=0.13
+
+prop_trend_test(xtab1,df_ind1$total_dose)
+#P=0.05
+
+#sa_int1_total_dose ????
+library('lme4')
+model1<- glmer(cbind(frel180,n_defcure) ~   total_dose + (1 | id) ,
+              family = binomial, data = df_ind1)
+
+summary(model1)
+
+
+model1a<- glmer(cbind(frel180,n_defcure) ~   total_dose +rel_diag+(1 | id) ,
+              family = binomial, data = df_ind1)
+
+summary(model1a)
+
+
+
+model1b<- glmer(cbind(frel180,n_defcure) ~  total_dose +rel_diag+cases_grouped+ (1 | id) , family = binomial, data = df_ind1)
+
+summary(model1b)
+
+
+model2<- glmer(cbind(compo,notf) ~   sa_int1_total_dose + (1 | id) ,
+              family = binomial, data = df_ind1)
+
+summary(model2)
+```
+
+
+
+
+
+#Results V) Time trend analysis:
+
+```{r}
+setwd("C:/Users/Rutuja Chhajed/OneDrive - Nexus365/IDDO/Data")
+vl_main <-read_csv("VL_cleandata_0222.csv")
+df_all$key<-paste0(df_all$pub_id,"_",df_all$redcap_repeat_instance)
+df<-left_join(df_all,vl_main[,c('key','pub_year')])
+df$pub_year<-as.numeric(df$pub_year)
+
+df$decade<-ifelse(df$pub_year<1990,"80s",ifelse(df$pub_year<2000,"90s",ifelse(df$pub_year<2010,"00s","10s")))
+
+m<- metaprop(
+  data = df,
+  event = frel180,#Relapse variable to be considered: Here it is at 180 days
+  n=n_icured, 
+  sm = "PLOGIT",
+  prediction=TRUE
+)
+
+
+m_decade<-update.meta(m, 
+            byvar=decade, 
+            comb.random = TRUE, 
+            comb.fixed = F)
+
+
+#p=0.0181
+dec<-unique(df$decade)
+
+for (i in 1:4){
+  cm<-dec[i]
+   df_tmp<-subset(df,df$dec==cm)
+               m_tmp<- metaprop(data = df_tmp,  event =frel180,  n=n_icured,   sm = "PLOGIT",  prediction=TRUE)
+               assign(paste0("m_dec",i),m_tmp)
+                pvtemp<-metabias(m_tmp,method.bias = "Egger",k.min=5)
+               ptemp<-rbind(ptemp,c(cm,pvtemp$p.value))
+               rm(m_tmp)}
+
+
+
+m_adj<-copas(m_dec1, gamma0.range=c(-2,5), gamma1.range=c(0,2))
+m_adj
+catname=m_adj$x$data$decade[1]
+odec1<-m_extract(m_adj,catname)
+rm(m_adj)
+metabias(m_dec1,method.bias = "Egger")
+# p-value = 0.064
+
+
+
+m_adj<-copas(m_dec2, gamma0.range=c(-3,5), gamma1.range=c(0,2))
+m_adj
+catname=m_adj$x$data$decade[1]
+odec2<-m_extract(m_adj,catname)
+rm(m_adj)
+metabias(m_dec2,method.bias = "Egger")
+# p-value < 0.0001
+
+
+m_adj<-copas(m_dec3, gamma0.range=c(-2,5), gamma1.range=c(-3,3))
+m_adj
+catname=m_adj$x$data$decade[1]
+odec3<-m_extract(m_adj,catname)
+rm(m_adj)
+metabias(m_dec3,method.bias = "Egger")
+# p-value = 0.0037
+
+#Value changes a lot with gamma0! ( 4 to 5)
+
+m_adj<-copas(m_dec4, gamma0.range=c(-3,5), gamma1.range=c(0,2))
+m_adj
+catname=m_adj$x$data$decade[1]
+odec4<-m_extract(m_adj,catname)
+rm(m_adj)
+metabias(m_dec4,method.bias = "Egger")
+# p-value = 0.0014
+
+
+m_table<-rbind(m_table, odec1, odec2, odec3, odec4)
+rm(m_dec1, m_dec2, m_dec3, m_dec4)
+rm(odec1, odec2, odec3, odec4)
+
+```
+
+
+#Final Table1 Creation
+```{r}
+final<-rbind(m_table,m_dose)
+
+cols.num <- c( "est0","lb0","ub0","est","lb","ub","i2","i2lb","i2ub")
+final[cols.num] <- sapply(final[cols.num],as.numeric)
+final[, cols.num] <- lapply(final[, cols.num, drop = FALSE],
+                             function(x) x * 100)
+
+final[, cols.num] <- lapply(final[, cols.num, drop = FALSE],
+                             function(x) round(x,1))
+
+
+setwd("C:/Users/Rutuja Chhajed/OneDrive - Nexus365/IDDO/Data")
+drugcat_names <-read_excel("C:/Users/Rutuja Chhajed/OneDrive - Nexus365/IDDO/Data/DrugCategories.xlsx", 
+    sheet = "drug cat full names")
+
+colnames(final)[which(colnames(final) == 'name')] <- 'drugcat'
+final<-left_join(final,drugcat_names,by="drugcat")
+
+
+final$name<-ifelse(is.na(final$`Drug Category`),final$drugcat,final$`Drug Category`)
+
+final$unadj<-with(final,paste0(est0,"% [95% CI: ",lb0,"%-",ub0,"%]"))
+final$adj<-with(final,paste0(est,"% [95% CI: ",lb,"%-",ub,"%]"))
+final$tcr<-with(final,paste0(tot,"/",cured,"/",relapse))
+final<-final[,c("name","arms","tcr","unadj","i2","adj")]
+write.csv(final,"table1_overall.csv")
+
+
+
+```
+
+
+# Results II. Stratified analysis by Region and Drug categories: For all studies at 6 month follow-up!
+
+```{r echo=TRUE, message=FALSE, warning=FALSE}
+#MAIN DATA SET FOR NOW!!
+df_6m<-subset(df_all,df_all$rmt180>0)
+df_6m<-subset(df_6m,df_6m$n_icured>0)
+df_6m<-subset(df_6m,!df_6m$st_region=="Multi-Regional")
+
+final<-NULL
+
+drugcatlist<- c("LamB SD Mono" ,"LamB SD Comb",  "LamB MD Mono", "LamB MD Comb", "LamB UD Mono" ,"AmphB deoxycholate" ,"AmphB (FLCC)" ,"Miltefosine","Paromomycin" ,"Miltefosine & Paromomycin" ,"PA" ,"PA & Paromomycin"  ,"PA comb")    
+
+
+for (i in 1:18){
+  
+tmp<- df_6m[which(df_6m$drugcat==drugcatlist[i]),]
+
+if(nrow(tmp)==0) next
+tmp<- droplevels(tmp)
+
+m<- metaprop(
+  data = tmp,
+  event = frel180,#Relapse variable to be considered: Here it is at 180 days
+  n=n_icured, 
+  sm = "PLOGIT",
+  prediction=TRUE
+)
+assign(paste0("m_",i),m)
+
+
+#--------------------------------
+# Subgroup analysis by Drug category
+#--------------------------------
+m_region<-update.meta(m, 
+            byvar=st_region, 
+            comb.random = TRUE, 
+            comb.fixed = F)
+assign(paste0("m_region_",i),m_region)
+
+
+
+s<-summary(m_region)
+s1<-s$within.random
+
+est<- exp(s1$TE)/(1+exp(s1$TE))
+est<-round(est,4)
+lb<-exp(s1$lower )/(1+exp(s1$lower))
+lb<-round(lb,3)
+ub<-exp(s1$upper )/(1+exp(s1$upper))
+ub<-round(ub,3)
+
+i2<-s$I2.w
+i2_est<- i2$TE
+i2_lb<-i2$lower
+i2_ub<-i2$upper
+i2_est<-round(i2_est,3)
+i2_lb<-round(i2_lb,3)
+i2_ub<-round(i2_ub,3)
+
+a<-NULL
+a=s$within.predict$lower
+p_lb<-exp(a)/(1+exp(a))
+
+a<-NULL
+a=s$within.predict$upper
+p_ub<-exp(a)/(1+exp(a))
+
+n<-s$k.w
+region<-s$bylevs
+dm<-cbind(region,n,est,lb,ub,i2_est,i2_lb,i2_ub,p_lb,p_ub)
+dm<-as.data.frame(dm)
+dm$drugcat<-drugcatlist[i]
+dm<-dm[,c(11,1:10)]
+
+o<-s$random
+o_n<-s$k
+o_est<-exp(o$TE)/(1+exp(o$TE))
+o_lb<-exp(o$lower)/(1+exp(o$lower))
+o_ub<-exp(o$upper)/(1+exp(o$upper))
+
+
+oi2<-s$I2
+a<-NULL
+a=s$predict$lower
+o_plb<-exp(a)/(1+exp(a))
+a<-NULL
+a=s$predict$upper
+o_pub<-exp(a)/(1+exp(a))
+
+
+o_row<-round(c(o_est,o_lb,o_ub,oi2$TE,oi2$lower,oi2$upper,o_plb,o_pub),3)
+o_row<-c(drugcatlist[i],"Overall",o_n, o_row)
+
+
+dm<-rbind(o_row,dm)
+
+
+events_region<-tmp %>% 
+  dplyr::group_by(st_region) %>%
+  dplyr::summarise(
+    n_studies 	= length(unique(pub_id)),
+    n_event	= sum(frel180, na.rm = TRUE ), #Relapse variable to be considered: Here it is at 180 days
+    n_cured	= sum(n_icured, na.rm = TRUE),
+    n_totfu= sum(sa_num_tx, na.rm = TRUE))
+colnames(events_region)[1]<-"region"
+
+
+dm<-left_join(dm,events_region,by='region')
+
+final<-rbind(final,dm)
+assign(paste0("dm_",i),dm)
+ 
+print(drugcatlist[i])
+print(s)
+}
+
+final_store_rel<-final
+
+setwd("C:/Users/Rutuja Chhajed/OneDrive - Nexus365/IDDO/Data")
+drugcat_names <-read_excel("C:/Users/Rutuja Chhajed/OneDrive - Nexus365/IDDO/Data/DrugCategories.xlsx", 
+    sheet = "drug cat full names")
+
+final<-left_join(final,drugcat_names,by="drugcat")
+
+final<-final[,c("Drug Category", "region",  "n_studies","n","n_totfu","n_cured","n_event","est", "lb","ub","i2_est","i2_lb","i2_ub","p_lb","p_ub")]
+
+colnames(final)<-c("Drug Category","Region","Studies","Arms","Tot FU","In. cured", "Relapses", "Est","lb","ub","I2","i2_lb","i2_ub","p_lb","p_ub")
+
+
+cols.num <- c( "Est","lb","ub","I2","i2_lb","i2_ub","p_lb","p_ub")
+final[cols.num] <- sapply(final[cols.num],as.numeric)
+final[, cols.num] <- lapply(final[, cols.num, drop = FALSE],
+                             function(x) x * 100)
+
+final[, cols.num] <- lapply(final[, cols.num, drop = FALSE],
+                             function(x) round(x,2))
+
+write.csv(final,"Results2_drugcatregion_0413.csv")#Change date and name
+#Do prop.test for i=4 and 7 (Med)
+#Manually updated results in Excel
+```
+##Plotting Drug-Region sub group analysis
+
+```{r}
+library(readxl)
+res_6m <- final
+
+colnames(res_6m)<-c("drug_category", "region",  "n_studies","arms","n_totfu","n_cured","n_event","est", "lb","ub","i2_est","i2_lb","i2_ub","p_lb","p_ub")
+res_6m$id<-paste0(res_6m$drug_category,res_6m$region)
+
+# Make every country unique
+res_6m$region<-factor(res_6m$region,levels = c(  "Mediterranean","Central Asia" , "South America","Eastern Africa","India Subcontinent","Overall"   ))
+
+r<-subset(res_6m,res_6m$drug_category%in% c("LAmB (Single dose) Mono regimen"   , "LamB (Single dose) Combination regimen"  ,"LamB (Multiple dose) Mono regimen" ))
+r$region<-factor(r$region,levels = c( "Mediterranean","Central Asia" , "South America","Eastern Africa","India Subcontinent","Overall"   ))
+
+
+library(RColorBrewer)
+
+#define custom color scale
+myColors <- brewer.pal(6, "Dark2")
+names(myColors) <- levels(r$region)
+myColors[6]<-"#E7298A"
+myColors[4]<- "#1E3F66"
+custom_colors <- scale_colour_manual(values = myColors)
+
+p <- ggplot(r, aes(x=region, y=est, ymin=lb, ymax=ub,colour = region)) + geom_pointrange( size=1.05,aes(colour = region))+
+#+ coord_cartesian(ylim=c(0, 30))+
+  coord_flip()+ ylab("Relapse Proportion at 6month (%)")+xlab("")+labs("Region")+
+  facet_wrap(~ drug_category, ncol = 1) +  theme(panel.background = element_rect(fill = "white"),panel.grid.major = element_line("lightgray",0.5),
+        panel.grid.minor = element_line("lightgray",0.25))+ custom_colors
+
+
+
+
+r1<-subset(res_6m,res_6m$drug_category%in% c("Amphotericin B deoxycholate"  , "Amphotericin b (fat/lipid/colloid/cholestrol)"))
+
+p1 <- ggplot(r1, aes(x=region, y=est, ymin=lb, ymax=ub,colour = region)) + geom_pointrange( size=1.05,aes(colour = region))+
+#+ coord_cartesian(ylim=c(0, 30))+
+  coord_flip()+ ylab("Relapse Proportion at 6month (%)")+xlab("")+labs("Region")+
+  facet_wrap(~ drug_category, ncol = 1) +  theme(panel.background = element_rect(fill = "white"),panel.grid.major = element_line("lightgray",0.5),
+        panel.grid.minor = element_line("lightgray",0.25))+ custom_colors
+p1
+
+
+r2<-subset(res_6m,res_6m$drug_category %in% c("Miltefosine"  ,"Paromomycin","Miltefosine & Paromomycin"  ,"Pentavalent antimonial" , "Pentavalent antimonial & Paromomycin"))
+
+p2 <- ggplot(r2, aes(x=region, y=est, ymin=lb, ymax=ub,colour = region)) + geom_pointrange( size=1.05,aes(colour = region))+
+#+ coord_cartesian(ylim=c(0, 30))+
+  coord_flip()+ ylab("Relapse Proportion at 6month (%)")+xlab("")+labs("Region")+
+  facet_wrap(~ drug_category, ncol = 1) +  theme(panel.background = element_rect(fill = "white"),panel.grid.major = element_line("lightgray",0.5),
+        panel.grid.minor = element_line("lightgray",0.25))+ custom_colors
+p2
+
+
+```
+
+
+#Results III) 6 month vs 12 month
+Focus on 19 studies with follow up duration of more than 6 months
+
+```{r}
+df_612<-subset(df_all,(df_all$rmt360==1&df_all$rmt180>0))
+length(unique(df_612$pub_id))
+
+
+temp<-subset(df_612,df_612$pub_id==88)
+temp$frel360[1:2]<-0
+temp$frel180[1:2]<-c(3,4)
+temp$frel<-temp$frel180+temp$frel360
+
+temp2<-subset(df_612,!df_612$pub_id==88)
+
+df_612<-rbind(temp, temp2)
+#19 studies with relapses at 6 and 12 months!
+#Sum of relapses at 6 and >6 months. If one is NA--> treated as 0
+#Useless measure
+
+#For 12 months follow up studies, not <12 but at 12 months!!
+#Relapse_time is a confusing variable: Puts noted relapse cases, it is NOT FOLLOW UP DURATION!!!
+#eff_relapse_days is not correctly written either.
+
+#For now, all studies with rmt360==1 and relapse_time =! 240,270
+
+#df_5<-subset(df_5,!df_5$relapse_time%in% c("240","270"))
+
+
+ro<- metaprop(
+  data =df_612,
+  event =  frel,
+  n=n_icured, 
+  sm = "PLOGIT",
+  prediction=TRUE)
+
+r12<- metaprop(
+  data =df_612,
+  event =  frel360,
+  n=n_icured, 
+  sm = "PLOGIT",
+  prediction=TRUE)
+
+r6<- metaprop(
+  data =df_612,
+  event =  frel180,
+  n=n_icured, 
+  sm = "PLOGIT",
+  prediction=TRUE)
+
+
+m_adj<-copas(ro, gamma0.range=c(-2,5), gamma1.range=c(0,2))
+metabias(ro,method.bias = "Egger")
+catname<-"spec-overall"
+o1<-m_extract(m_adj,catname)
+
+
+m_adj<-copas(r6, gamma0.range=c(-3,6), gamma1.range=c(-1,3))
+m_adj
+metabias(r6,method.bias = "Egger")
+catname<-"Spec-6m"
+o2<-m_extract(m_adj,catname)
+
+m_adj<-copas(r12, gamma0.range=c(-2,5), gamma1.range=c(0,2))
+metabias(r12,method.bias = "Egger")
+catname<-"Spec-12m"
+o3<-m_extract(m_adj,catname)
+
+results_6vs12<-rbind(o1,o2,o3)
+
+events1<-df_612 %>% 
+  dplyr::summarise(
+    n_studies 	= length(unique(pub_id)),
+    n_event	= sum(frel180, na.rm = TRUE), #Relapse variable to be considered: Here it is at 180 days
+    n_cured	= sum(n_icured),
+    n_totfu= sum(sa_num_tx))
+
+events2<-df_612 %>% 
+  dplyr::summarise(
+    n_studies 	= length(unique(pub_id)),
+    n_event	= sum(frel), #Relapse variable to be considered: Here it is at 180 days
+    n_cured	= sum(n_icured),
+    n_totfu= sum(sa_num_tx))
+
+events3<-df_612 %>% 
+  dplyr::summarise(
+    n_studies 	= length(unique(pub_id)),
+    n_event	= sum(frel360), #Relapse variable to be considered: Here it is at 180 days
+    n_cured	= sum(n_icured),
+    n_totfu= sum(sa_num_tx))
+
+n_event<-c(events2[1,2], events1[1,2],events3[1,2])
+results_6vs12$relapse<-n_event
+
+
+
+
+final<-results_6vs12
+
+cols.num <- c( "est0","lb0","ub0","est","lb","ub","i2","i2lb","i2ub")
+final[cols.num] <- sapply(final[cols.num],as.numeric)
+final[, cols.num] <- lapply(final[, cols.num, drop = FALSE],  function(x) x * 100)
+
+final[, cols.num] <- lapply(final[, cols.num, drop = FALSE],
+                             function(x) round(x,1))
+
+
+final$unadj<-with(final,paste0(est0,"% [95% CI: ",lb0,"%-",ub0,"%]"))
+final$adj<-with(final,paste0(est,"% [95% CI: ",lb,"%-",ub,"%]"))
+final$tcr<-with(final,paste0(tot,"/",cured,"/",relapse))
+final<-final[,c("name","arms","tcr","unadj","i2","adj")]
+
+
+
+write.csv(final,'table1_6vs12_0630.csv')
+
+t<-df_612[,c("pub_id","st_followup","drugcat","n_treated","n_icured","frel180","frel360","frel","relapse_time", "eff_arm_relapse_days" ,"relapse_6l"  , "relapse_6"  ,  "relapse_6_12", "issue"  )]
+
+write.csv(t,'table4_0630.csv')
+
+```
+
+
+##Supplementary
+```{r}
+
+bg$n<-as.numeric(bg$n)
+ggplot(data=bg,aes(x=0.1,y=n,fill=name))+geom_bar(position="stack", stat="identity")+coord_flip()
+
+
+
+ea<-subset(df_all,df_all$st_region=="Eastern Africa")
+
+m<- metaprop(
+  data = ea,
+  event = frel180,#Relapse variable to be considered: Here it is at 180 days
+  n=n_icured, 
+  sm = "PLOGIT",
+  prediction=TRUE
+)
+
+
+
+#--------------------------------
+# Subgroup analysis by Drug category
+#--------------------------------
+ea_drug<-update.meta(m, 
+            byvar=drugcat, 
+            comb.random = TRUE, 
+            comb.fixed = F)
+
+ea_ssg<-subset(ea,ea$drugcat=="PA"|ea$drugcat=="PA & Paromomycin")
+ea_nossg<-subset(ea,!((ea$drugcat=="PA")&(ea$drug=="PA & Paromomycin")))
+m_ssg<- metaprop(
+  data = ea_ssg,
+  event = frel180,#Relapse variable to be considered: Here it is at 180 days
+  n=n_icured, 
+  sm = "PLOGIT",
+  prediction=TRUE
+)
+
+
+m_nossg<- metaprop(
+  data = ea_nossg,
+  event = frel180,#Relapse variable to be considered: Here it is at 180 days
+  n=n_icured, 
+  sm = "PLOGIT",
+  prediction=TRUE
+)
+
+ 
+ea_ssg_cases<-update.meta(m_ssg, 
+            byvar=relapsediagmethod ,  
+            comb.random = TRUE, 
+            comb.fixed = F)
+
+```
+
+
+
