@@ -1,0 +1,412 @@
+---
+output:
+  word_document: default
+  html_document: default
+---
+VL Relapse analysis 15 Dec 2021
+
+PRE-PROCESSING THE FINAL DATASET FOR ANALYSIS:
+
+I)Creating drug classes, follow up duration related variables.
+II) Adding residuals to 0 event studies
+III) Filtering out studies:
+  1. Removing HIV co-infection based studies
+  2. Missing info
+  3. < 6month follow-up
+  4. Unpublished (already removed)
+
+```{r message=FALSE, warning=FALSE, include=FALSE}
+require(RCurl)
+library('googlesheets4')
+library(readr)
+library(readxl)
+# meta-analysis packages
+library(meta)
+library(metafor)
+#library(metagen)
+library(metasens) 
+# graphics packages
+library(tidyverse)
+library(reshape)
+library(doBy)
+library(stringr)
+library(ggpubr)
+library(patchwork)
+library(dplyr)
+library(data.table)
+setwd("C:/Users/Rutuja Chhajed/OneDrive - Nexus365/IDDO/Data")
+
+#D1: VLDATA_CLEAN
+#Cleaned data (see VL_data_clean.R for the steps): VL_Main (from Redcap) --> VL_clean uploaded to google sheets
+#Continuous changes to the file: Missing numbers, corrections
+#Pick up latest cleaned file from Google Sheets
+#Download it and save the sheet. Read it here-->
+vl_main <-read_csv("VL_cleandata_0715b.csv")
+length(unique(vl_main$pub_id)) #160 studies: Only published studies. (Already filtered unpublished ones from the cleandata file (Drive))
+
+#Additional variables from the vl_studydesign: Relapse definitions, severe cases inclusion, type if VL cases.
+#D2: VL_SEVEREDESIGN
+relapse_def <- read_excel("vl_studydesign.xlsx", 
+    sheet = "outcome_defintion", col_types = c("numeric", 
+        "skip", "skip", "text", "text"))
+relapse_def$relapse_method<-tolower(relapse_def$relapse_method)
+
+vl_sev <- read_excel("vl_studydesign.xlsx", 
+    sheet = "disease_severity", col_types = c("skip", 
+        "numeric", "skip", "numeric", "skip", 
+        "text", "numeric", "skip", "text", 
+        "skip", "text"))
+#Don't change order in the raw excel file
+
+
+setwd("C:/Users/Rutuja Chhajed/OneDrive - Nexus365/IDDO/Data")
+drug_cat <- read_excel("DrugCategories.xlsx", sheet = "drug_category")
+
+setDT(vl_sev)[, arm_no := rowid(tag)]
+vl_sev$id<-paste0(vl_sev$tag,"_",vl_sev$arm_no)
+vl_sev$tag<-NULL
+vl_sev$Arm_ID<-NULL
+vl_sev$arm_no <-NULL
+
+
+#D3: VL_SAE (Taken from SAE paper)
+
+vl_sae <- read_excel("VL_SAE.xlsx", sheet = "VL_SAEs_per_arm_04_12_2019", 
+col_types = c("skip", "skip", "skip", 
+   "numeric", "skip", "numeric", "skip", 
+       "skip", "skip", "skip", "skip", "text", 
+       "skip", "skip", "numeric", "numeric", 
+        "skip", "skip", "skip", "skip", "skip"))
+
+vl_sae$id<-paste0(vl_sae$Tag,"_",vl_sae$Repeat.Instance )
+vl_sae$Tag<-NULL
+vl_sae$Repeat.Instance<-NULL
+
+setwd("C:/Users/Rutuja Chhajed/OneDrive - Nexus365/IDDO/Data")
+drug_cat <- read_excel("DrugCategories.xlsx", sheet = "drug_category")
+
+df<-vl_main[,c('pub_id',
+               'st_intv_arms',
+               'redcap_repeat_instance',
+               'st_followup',
+               'me_hiv_yn',
+               'eff_arm_icure_num',
+               'eff_arm_icure_days',
+               'eff_arm_relapse_num',
+               'eff_arm_relapse_days',
+               'st_status',
+               'st_design',
+               'st_allocation',
+               'st_region',
+               'sa_num_tx'	,
+               'sa_num_followup',
+               'sa_intv1_drug',
+               'sa_intv1_dose_mgkg',
+               'sa_intv1_freq_discrete',
+               'sa_intv1_freq_new',
+               'sa_int1_total_dose',
+               'sa_intv1_dura',
+               'sa_intv1_reg_detail' ,
+               'sa_intv2_drug',
+               'sa_intv2_dose_mgkg',
+               'sa_intv2_freq_discrete',
+               'sa_intv2_dura',
+               'sa_intv2_reg_detail',
+               "total_relapse",
+               "relapse_6l", "relapse_6","relapse_6_12","issue","relapse_time")]
+
+#combining all variables in one df
+#Unique ID for every study & arm
+df$id<-paste0(df$pub_id,"_",df$redcap_repeat_instance)
+df<-left_join(df,vl_sae,by='id')
+df0<-left_join(df,vl_sev,by="id")  
+colnames(relapse_def)[1]<-"pub_id"
+df0<-left_join(df0,relapse_def,by="pub_id")
+ 
+df0$tag<-NULL
+df0$Arm_ID<-NULL
+df0$arm_no<-NULL
+length(unique(df0$pub_id))
+```
+
+
+#2) Subsetting studies 
+1. Unpublished
+2. Removing studies with no reported denominator/cured numbers and 0 cured ones
+Not removing those with NA as relapse num, because total_relapse (Manually created variable by RC) may not be NA
+```{r}
+
+#Subset unpublished studies-------------------------------------------------------------------------------------------------------
+#1) Already removed 22 studies in Preproc!!
+#182-22=160 now
+rm(df)
+df<-subset(df0,df0$st_status=="Published")
+length(unique(df$pub_id))
+
+
+length(unique(df0$pub_id))
+length(unique(df$pub_id))
+rm(vl_sev)
+rm(relapse_def)
+rm(df0)
+rm(vl_main)
+
+#2) Unavailable denominator 
+df1<-subset(df,df$eff_arm_icure_num>0)
+df_undefdeno<-subset(df,!df$eff_arm_icure_num>0)
+#4 studies with unclear denominator
+length(unique(df1$pub_id))
+#140 left
+df1$n_icured<-df1$eff_arm_icure_num
+df1$eff_arm_icure_num<-NULL
+
+# 3) #Remove studies with HIV co-infections
+df_all<-subset(df1,(!df1$me_hiv_yn=="Yes")|is.na(df1$me_hiv_yn))#124 with HIV yes and unknown  And 2 with no data. 
+length(unique(df_all$pub_id))
+df_hiv<-subset(df1,df1$me_hiv_yn=="Yes")
+length(unique(df_hiv$pub_id)) #14 with HIV removed
+#What about htose with no info?
+#124 left
+
+#Remove studies with <6 month follow-up
+df<-subset(df_all,!df_all$st_followup<180)
+df_fu_lessthan6month<-subset(df_all,df_all$st_followup<180)
+#3 studies
+length(unique(df$pub_id))
+table(df$eff_arm_relapse_days)
+table(df$eff_arm_relapse_num)
+#121 left
+rm(df_all)
+df_store<-df
+```
+Drug classifications: Main variable created for analysis: drugcat
+```{r}
+#Single drug or combination therapy. mono=1 for single drug
+df$mono<-ifelse(is.na(df$sa_intv2_drug),1,0)
+
+#Making new treatment name
+df$drug<-ifelse(df$mono==1,df$sa_intv1_drug, paste0(df$sa_intv1_drug,' & ',df$sa_intv2_drug))
+
+#Drug list
+druglist<-unique(df$drug)
+
+#Dosage of LamB?
+#Use Freq_new as original dosage variable has missing info.
+#Freq_new created after 11_25 version based on checkinh dose information manually
+
+df$sd<-ifelse(df$sa_intv1_freq_new=="Single dose",1,
+              ifelse(df$sa_intv1_freq_new=="Unknown",99,0))
+
+#Variable dcat is for LamB regimens
+
+df$dcat<-ifelse((df$sa_intv1_drug=="Liposomal Amphotericin B (L-AmB)" & df$mono==1 & df$sd==1),"LamB SD Mono", #LamB single dose Mono
+         ifelse((df$sa_intv1_drug=="Liposomal Amphotericin B (L-AmB)" & df$mono==0 & df$sd==1),"LamB SD Comb",#LamB single dose Combo
+         ifelse((df$sa_intv1_drug=="Liposomal Amphotericin B (L-AmB)" & df$mono==1 & df$sd==0),"LamB MD Mono",#LamB multi dose Mono
+         ifelse((df$sa_intv1_drug=="Liposomal Amphotericin B (L-AmB)" & df$mono==0 & df$sd==0),"LamB MD Comb",#LamB multi dose Combo
+         ifelse((df$sa_intv1_drug=="Liposomal Amphotericin B (L-AmB)" &  df$mono==1 & df$sd==99),"LamB UD Mono",#LamB ? dose Mono
+         ifelse((df$sa_intv1_drug=="Liposomal Amphotericin B (L-AmB)" &  df$mono==0 & df$sd==99),"LamB UD Comb",0))))))#LamB ? dose Combo
+
+
+
+colnames(drug_cat)<-c("drug","drug_cat_others","Freq")
+#Combining with formal list of drug categories
+df_all<-left_join(df,drug_cat,by='drug')
+df_all$Freq<-NULL
+#Drugcat is final drug regimen variable
+df_all$drugcat<-ifelse(df_all$dcat==0,df_all$drug_cat_others,df_all$dcat)
+
+
+#Drug category list
+drugcatlist<-unique(df_all$drugcat)
+length(unique(df_all$pub_id))
+
+```
+
+Separating relapses at 6 month and later. 
+Creating new variables to mark that. 
+Using our variables we manually filled relapses at 6l, 6 and 6p)
+~Studies saying follow-up time of 12 months: Need to separate relapses at 6 month and post 6 months
+~Studies saying follow-up of 12 months but relapses at 6 month only: use the data filled by RC/PD
+~Incorrect numbers: Corrected by RC/PD, to be overwritten.
+```{r}
+#Marking ones with 180 day follow-up: Categorizing studies by measurement of relapse time: 
+
+#1) Studies with relapse days (reported) for exact 180--                             --1--  eff_relapse_num 
+#2) Studies with relapse days (reported) of >180 and info on relapse at 6 month      --2--  relapse_6+relapse_6l
+#3) Studies with relapse days (reported) of >180 and no info on relapse at 6 month   --0--  NA
+
+#Important to treat NA and 0 differently. If NA/no info at 6 months, relapse_measurement_time (rmt) cannot be 180!
+#If it is 0 at 6 months, can be included, rmt can be 180
+
+df_all$rmt180<-ifelse(df_all$st_followup==180&is.na(df_all$relapse_6_12),1,
+                      ifelse(df_all$st_followup>180&(!is.na(df_all$relapse_6)),2,
+                             ifelse(df_all$st_followup==180& (!is.na(df_all$relapse_6_12)),2,0 ))) 
+#Incorrect relapse days written, values at 6-12 months
+
+
+#Final relapse number variable at 180 days: frel180
+
+df_all$frel180<-ifelse(df_all$st_followup==180&is.na(df_all$relapse_6_12),df_all$eff_arm_relapse_num, 
+          #1.180 days FU and no value for relapse at 6-12m, take main value
+        ifelse(df_all$st_followup==180&!is.na(df_all$relapse_6_12),rowSums(df_all[,c("relapse_6l","relapse_6")],na.rm=TRUE),
+          #2.180 days FU and some value for relapse at 6-12m, DO NOT take main value, take relapses till 6 months ONLY!
+        ifelse(df_all$rmt180==2,rowSums(df_all[,c("relapse_6l","relapse_6")],na.rm = TRUE),NA)))
+        #3.#180+ days FU and relapses reported at 6m--Definitely value at relapse_6-12, take relapses till 6 months ONLY! 
+          #For those with >180 FU, no value at 6m, NA! (rmt==0)
+
+
+#Some studies with relapse_time less than 180!! No: removed already!
+
+
+#Marking ones with 180-360 day follow-up: Categorizing studies by measurement of relapse time: 
+#1) Studies with relapse days (reported) of >180 and info on relapse at 6-12 month              --1--  relapse_6-12 only!! DONT TAKE relapse_6!
+#2) Studies with relapse days (reported) of >180 and no info on relapse at 6-12 month (NA)      --0--  NA
+
+#This logic is incorrect: Can't look at relapse days. I mean you can. But can't rely on that variable. Missing where follow-up was longer, but relapse occurred earlier. 
+
+#df_all$rmt360<-ifelse(df_all$eff_arm_relapse_days>=180&(!is.na(df_all$relapse_6_12)),1,0)
+
+df_all$rmt360<-ifelse((!is.na(df_all$relapse_6_12)),1,0)
+
+df_all$frel360<-ifelse(df_all$rmt360==1,df_all$relapse_6_12,NA)
+
+
+
+
+#Converting to factors, changing group names.
+
+df_all$cases_grouped<-as.factor(df_all$cases_grouped)
+df_all$cases_grouped[is.na(df_all$cases_grouped)]<-"Unclear"
+df_all$severe_ka_included[is.na(df_all$severe_ka_included)]<-"Unclear"
+df_all$relapse_method[is.na(df_all$relapse_method)]<-"Not defined"
+df_all$relapse_method[df_all$relapse_method=="parasitological"]<-"Parasitological"
+df_all$relapse_method<-as.factor(df_all$relapse_method)
+
+
+# Adding 0.5 to 0 relapse studies
+df_all$n_relapse<-df_all$eff_arm_relapse_num
+#df_all$n_relapse<-ifelse(df_all$eff_arm_relapse_num==0,0.5,df_all$eff_arm_relapse_num)
+df_all$n_ifail<-df_all$sa_num_tx-df_all$n_icured
+df_all$eff_arm_relapse_num<-NULL
+
+df_all[,c("number_of_deaths","n_SAEs")]<-sapply(df_all[,c("number_of_deaths","n_SAEs")], as.numeric)
+df_all<-as.data.frame(df_all)
+
+#Defining the composite measure:Initial Failures, Relapses and deaths!!!
+
+#df_all$compo<-rowSums(df_all[,c("n_relapse","n_ifail")],na.rm = TRUE)
+
+#Correcting relapse method
+df_all$rel_diag<-ifelse(df_all$relapse_method=="clinical","C",
+                        ifelse(df_all$relapse_method %in% c("clinical + parasitological","Parasitological"),"P",
+                               ifelse(df_all$relapse_method %in% c("not defined","Not defined"),"U","CPS")))
+
+df_main<-df_all
+#df_main$n_relapse<-NULL
+
+
+#frel will have total number of relapses
+df_main$frel<-rowSums(df_main[c('frel180','frel360')],na.rm = TRUE)
+df_main$frel<-ifelse(is.na(df_main$frel180)&is.na(df_main$frel360),NA,df_main$frel)
+df_main$frel<-ifelse(is.na(df_main$frel180)&is.na(df_main$frel360)&!is.na(df_main$total_relapse),df_main$total_relapse,df_main$frel)
+
+#chk1<-subset(df_main,is.na(df_main$frel180)&is.na(df_main$frel360))
+
+  #To ensure NA+NA is not 0!
+```
+
+Studies with issues: 
+1. Ones with mismatch of follow-up times and relapse numbers.
+2. Incorrect numbers reported
+
+
+```{r}
+
+#Checking how many with rmt180 and rmt360==0
+#Some studies are missed this way, need to put values from redcap (n_relapse and time of relapse too)
+
+c1<-subset(df_main,df_main$rmt180==0&df_main$rmt360==0)
+#Studies with eff_relapse days written as >180 in Redcep
+c11<-subset(c1,c1$eff_arm_relapse_days>180) 
+#Check these studies. Relapse days written as >180 in redcap, and we are taking it as it is. 
+#Check relapse_time (manually checked variable to see if all are really >180): 
+#Answer YES THEY ARE! 
+#SO FOR ALL OF THEM RMT360=1, 
+
+#For 11, 80, 127. Followup> 6months: NO CLEAR INFO OF WHEN THE RELAPSES HAPPENED (at 6,how many, at 12?)
+#Will remove them later, so removing this next step:
+#df_main$rmt360n<-ifelse(df_main$rmt180==0&df_main$rmt360==0&df_main$eff_arm_relapse_days>180,1,df_main$rmt360)
+
+#Okay, follow-up was more than 180 days, relapse counting was >180 days. Did the relapse actually occur after 180?
+
+#df_main$frel360n<-ifelse(df_main$rmt180==0&df_main$rmt360==0&df_main$eff_arm_relapse_days>180,df_main$n_relapse,df_main$frel360)
+#Studies with eff_relapse days written as <180 in Redcep
+c12<-subset(c1,c1$eff_arm_relapse_days<180) 
+#All these studies have follow up duration atleadt 6 month. Relapse_days doesn't mean follow-up! So please include them!
+
+df_main$rmt180n<-ifelse(df_main$rmt180==0&df_main$rmt360==0&df_main$eff_arm_relapse_days<180,1,df_main$rmt180)
+
+
+df_main$frel180n<-ifelse(df_main$rmt180==0&df_main$rmt360==0&df_main$eff_arm_relapse_days<180,df_main$n_relapse,df_main$frel180)
+
+df_main$rmt360n<-df_main$rmt360
+df_main$frel360n<-df_main$frel360
+df_main$freln<-rowSums(df_main[c('frel180n','frel360n')],na.rm = TRUE)
+
+
+df_main$relapse_timen<-ifelse(df_main$rmt180==0&df_main$rmt360==0&df_main$eff_arm_relapse_days>180,df_main$eff_arm_relapse_days,df_main$relapse_time)
+table(df_main$frel-df_main$freln)
+c2<-subset(df_main,df_main$rmt180n==0&df_main$rmt360n==0)
+
+df_main$frel<-df_main$freln
+df_main$frel180<-df_main$frel180n
+df_main$frel360<-df_main$frel360n
+df_main$rmt180<-df_main$rmt180n
+df_main$rmt360<-df_main$rmt360n
+df_main$relapse_time<-df_main$relapse_timen
+
+df_main[,c("rmt180n","rmt360n","frel180n","frel360n","freln","relapse_timen")]<-NULL
+df_main<-subset(df_main,!df_main$frel<0)
+length(unique(df_main$pub_id))
+#121 studies!
+
+#Only for studies with issue=NM, replace the rel with those written manually (relapse_6, relapse_6-12)
+#For others (Match or NA values (unverified vlaues, keep it the same!))
+#Be careful about the use of NAs in inelse statements.
+
+df_main$frel180n<-ifelse((!df_main$issue=="NM"| is.na(df_main$issue)),df_main$frel180,rowSums(df_main[,c("relapse_6l","relapse_6")],na.rm = TRUE))
+
+
+df_main$frel360n<-ifelse((!df_main$issue=="NM"| is.na(df_main$issue)),df_main$frel360,df_main$relapse_6_12)
+df_main$freln<-rowSums(df_main[c('frel180n','frel360n')],na.rm = TRUE)
+
+df_main$frel<-df_main$freln
+df_main$frel180<-df_main$frel180n
+df_main$frel360<-df_main$frel360n
+df_main[,c("frel180n","frel360n","freln")]<-NULL
+
+
+df_final<-subset(df_main,!df_main$frel<0)
+
+df_final$n_relapse<-NULL
+df_final$dcat<-NULL
+df_final$drug_cat_others<-NULL
+df_final$drug_group<-NULL
+df_final$drug_group_for_analysis<-NULL
+df_final1<-df_final[,c(1,11,44,36,49,40,35,12,13,27:29,31,45,47,46,48,51,50,2:10,14:26,30,32,33,34,37,38,39,41:43)]
+setwd("C:/Users/Rutuja Chhajed/OneDrive - Nexus365/IDDO/Analysis/VL_Analysis")
+saveRDS(df_final1,'vl_final.RDS')
+rm(df_all)
+rm(df)
+rm(df1)
+rm(c1)
+rm(c2)
+```
+
+
+
+
+
+
+
+
