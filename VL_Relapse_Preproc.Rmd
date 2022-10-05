@@ -37,6 +37,7 @@ library(data.table)
 setwd("C:/Users/Rutuja Chhajed/OneDrive - Nexus365/IDDO/Data")
 
 #D1: VLDATA_CLEAN
+
 #Cleaned data (see VL_data_clean.R for the steps): VL_Main (from Redcap) --> VL_clean uploaded to google sheets
 #Continuous changes to the file: Missing numbers, corrections
 #Pick up latest cleaned file from Google Sheets
@@ -44,13 +45,20 @@ setwd("C:/Users/Rutuja Chhajed/OneDrive - Nexus365/IDDO/Data")
 vl_main <-read_csv("VL_cleandata_0715b.csv")
 length(unique(vl_main$pub_id)) #160 studies: Only published studies. (Already filtered unpublished ones from the cleandata file (Drive))
 
-#Additional variables from the vl_studydesign: Relapse definitions, severe cases inclusion, type if VL cases.
-#D2: VL_SEVEREDESIGN
-relapse_def <- read_excel("vl_studydesign.xlsx", 
-    sheet = "outcome_defintion", col_types = c("numeric", 
-        "skip", "skip", "text", "text"))
-relapse_def$relapse_method<-tolower(relapse_def$relapse_method)
+#Additional variables from the vl_methods and vl_studydesign: Relapse definitions, severe cases inclusion, type if VL cases.
 
+#D2: VL_SEVEREDESIGN
+
+relapse_def<-  read_excel("C:/Users/Rutuja Chhajed/OneDrive - Nexus365/IDDO/Data/vl_methods.xlsx", 
+    sheet = "Relapse_definition_method")
+
+relapse_def$relapse_method_for_analysis <-tolower(relapse_def$relapse_method_for_analysis)
+
+relapse_def<-relapse_def[,c("Tag","relapse_method_for_analysis")]
+
+
+#D3
+setwd("C:/Users/Rutuja Chhajed/OneDrive - Nexus365/IDDO/Data")
 vl_sev <- read_excel("vl_studydesign.xlsx", 
     sheet = "disease_severity", col_types = c("skip", 
         "numeric", "skip", "numeric", "skip", 
@@ -69,8 +77,8 @@ vl_sev$Arm_ID<-NULL
 vl_sev$arm_no <-NULL
 
 
-#D3: VL_SAE (Taken from SAE paper)
-
+#D4: VL_SAE (Taken from SAE paper)
+setwd("C:/Users/Rutuja Chhajed/OneDrive - Nexus365/IDDO/Data")
 vl_sae <- read_excel("VL_SAE.xlsx", sheet = "VL_SAEs_per_arm_04_12_2019", 
 col_types = c("skip", "skip", "skip", 
    "numeric", "skip", "numeric", "skip", 
@@ -81,9 +89,6 @@ col_types = c("skip", "skip", "skip",
 vl_sae$id<-paste0(vl_sae$Tag,"_",vl_sae$Repeat.Instance )
 vl_sae$Tag<-NULL
 vl_sae$Repeat.Instance<-NULL
-
-setwd("C:/Users/Rutuja Chhajed/OneDrive - Nexus365/IDDO/Data")
-drug_cat <- read_excel("DrugCategories.xlsx", sheet = "drug_category")
 
 df<-vl_main[,c('pub_id',
                'st_intv_arms',
@@ -135,37 +140,42 @@ length(unique(df0$pub_id))
 2. Removing studies with no reported denominator/cured numbers and 0 cured ones
 Not removing those with NA as relapse num, because total_relapse (Manually created variable by RC) may not be NA
 ```{r}
-
+rm(df)
+rm(vl_sev)
+rm(relapse_def)
+rm(vl_main)
 #Subset unpublished studies-------------------------------------------------------------------------------------------------------
 #1) Already removed 22 studies in Preproc!!
 #182-22=160 now
-rm(df)
+
 df<-subset(df0,df0$st_status=="Published")
 length(unique(df$pub_id))
 
 
 length(unique(df0$pub_id))
 length(unique(df$pub_id))
-rm(vl_sev)
-rm(relapse_def)
-rm(df0)
-rm(vl_main)
+
 
 #2) Unavailable denominator 
 df1<-subset(df,df$eff_arm_icure_num>0)
-df_undefdeno<-subset(df,!df$eff_arm_icure_num>0)
-#4 studies with unclear denominator
+df_undefdeno<-subset(df,(!df$eff_arm_icure_num>0)|(is.na(df$eff_arm_icure_num)))
+length(unique(df_undefdeno$pub_id))
+#26 studies with unclear denominator (NA and 0)
+#But those studies might have arms with defined denominators
+#So finally exluded studies= 160-140=20 studies completely removed.
+length(unique(df$pub_id))
+
 length(unique(df1$pub_id))
 #140 left
 df1$n_icured<-df1$eff_arm_icure_num
 df1$eff_arm_icure_num<-NULL
 
 # 3) #Remove studies with HIV co-infections
-df_all<-subset(df1,(!df1$me_hiv_yn=="Yes")|is.na(df1$me_hiv_yn))#124 with HIV yes and unknown  And 2 with no data. 
+df_all<-subset(df1,(!df1$me_hiv_yn=="Yes")|is.na(df1$me_hiv_yn))#124 with Not ( HIV yes) and unknown  And 2 with no data. 
 length(unique(df_all$pub_id))
 df_hiv<-subset(df1,df1$me_hiv_yn=="Yes")
 length(unique(df_hiv$pub_id)) #14 with HIV removed
-#What about htose with no info?
+#What about those with no info?
 #124 left
 
 #Remove studies with <6 month follow-up
@@ -173,8 +183,7 @@ df<-subset(df_all,!df_all$st_followup<180)
 df_fu_lessthan6month<-subset(df_all,df_all$st_followup<180)
 #3 studies
 length(unique(df$pub_id))
-table(df$eff_arm_relapse_days)
-table(df$eff_arm_relapse_num)
+
 #121 left
 rm(df_all)
 df_store<-df
@@ -271,16 +280,18 @@ df_all$rmt360<-ifelse((!is.na(df_all$relapse_6_12)),1,0)
 df_all$frel360<-ifelse(df_all$rmt360==1,df_all$relapse_6_12,NA)
 
 
+```
 
 
+```{r}
 #Converting to factors, changing group names.
 
 df_all$cases_grouped<-as.factor(df_all$cases_grouped)
 df_all$cases_grouped[is.na(df_all$cases_grouped)]<-"Unclear"
 df_all$severe_ka_included[is.na(df_all$severe_ka_included)]<-"Unclear"
-df_all$relapse_method[is.na(df_all$relapse_method)]<-"Not defined"
-df_all$relapse_method[df_all$relapse_method=="parasitological"]<-"Parasitological"
-df_all$relapse_method<-as.factor(df_all$relapse_method)
+#df_all$relapse_method[is.na(df_all$relapse_method)]<-"Not defined"
+#df_all$relapse_method[df_all$relapse_method=="parasitological"]<-"Parasitological"
+df_all$relapse_method_for_analysis<-as.factor(df_all$relapse_method_for_analysis)
 
 
 # Adding 0.5 to 0 relapse studies
@@ -297,9 +308,9 @@ df_all<-as.data.frame(df_all)
 #df_all$compo<-rowSums(df_all[,c("n_relapse","n_ifail")],na.rm = TRUE)
 
 #Correcting relapse method
-df_all$rel_diag<-ifelse(df_all$relapse_method=="clinical","C",
-                        ifelse(df_all$relapse_method %in% c("clinical + parasitological","Parasitological"),"P",
-                               ifelse(df_all$relapse_method %in% c("not defined","Not defined"),"U","CPS")))
+#df_all$rel_diag<-ifelse(df_all$relapse_method=="clinical","C",
+                 #       ifelse(df_all$relapse_method %in% c("clinical + parasitological","Parasitological"),"P",
+                            #   ifelse(df_all$relapse_method %in% c("not defined","Not defined"),"U","CPS")))
 
 df_main<-df_all
 #df_main$n_relapse<-NULL
@@ -393,7 +404,8 @@ df_final$dcat<-NULL
 df_final$drug_cat_others<-NULL
 df_final$drug_group<-NULL
 df_final$drug_group_for_analysis<-NULL
-df_final1<-df_final[,c(1,11,44,36,49,40,35,12,13,27:29,31,45,47,46,48,51,50,2:10,14:26,30,32,33,34,37,38,39,41:43)]
+df_final1<-df_final[,c('id','pub_id','st_intv_arms','redcap_repeat_instance','st_region','drugcat','st_followup','st_design','eff_arm_icure_days','eff_arm_relapse_days','sa_num_tx','sa_num_followup','n_treated','n_icured','n_ifail','frel','rmt180','frel180','rmt360','frel360','cases_grouped','severe_ka_included','relapse_method_for_analysis','n_SAEs','number_of_deaths','issue','relapse_time','total_relapse','relapse_6l','relapse_6','relapse_6_12','me_hiv_yn','st_status','st_allocation','sa_intv1_drug','sa_intv1_dose_mgkg','sa_intv1_freq_discrete','sa_intv1_freq_new','sa_int1_total_dose','sa_intv1_dura','sa_intv1_reg_detail','sa_intv2_drug','sa_intv2_dose_mgkg','sa_intv2_freq_discrete','sa_intv2_dura','sa_intv2_reg_detail')]
+
 setwd("C:/Users/Rutuja Chhajed/OneDrive - Nexus365/IDDO/Analysis/VL_Analysis")
 saveRDS(df_final1,'vl_final.RDS')
 rm(df_all)
